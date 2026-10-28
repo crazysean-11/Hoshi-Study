@@ -2,7 +2,7 @@
 
 **把日语 EPUB 阅读、查词、AI 讲解、学习笔记和复习连接起来的 Android 开源应用，面向日语学习者及墨水屏设备。**
 
-[English](README.en.md) · [许可证](LICENSE) · [来源与修改说明](NOTICE.md) · [隐私说明](PRIVACY.md)
+[下载公开测试版 APK](https://github.com/crazysean-11/Hoshi-Study/releases/tag/v1.0.0-beta.1) · [English](README.en.md) · [许可证](LICENSE) · [来源与修改说明](NOTICE.md) · [隐私说明](PRIVACY.md)
 
 Hoshi Study 基于 [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android) 二次开发；后者是 [Hoshi Reader](https://github.com/Manhhao/Hoshi-Reader) 的 Android 原生实现。本项目保留上游阅读与查词能力，在此基础上增加 AI 辅助学习、笔记和批量复习工作流。它是独立维护的社区衍生项目，与上游官方版本有不同的功能及发布节奏。
 
@@ -31,7 +31,7 @@ Hoshi Study 基于 [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi
 
 ## 开始使用
 
-1. 自行构建并安装应用，导入 EPUB。
+1. 从 [Releases](https://github.com/crazysean-11/Hoshi-Study/releases/tag/v1.0.0-beta.1) 下载 `Hoshi-Study-1.0.0-arm64.apk` 并安装，再导入 EPUB。需要 Android 8.0 或以上及 arm64-v8a 设备。
 2. 在辞典设置中导入你有权使用的 Yomitan 辞典。**公开版不附带辞典和书籍。**
 3. 在学习设置中填写自己的 API 地址、模型名和 API key，然后测试连接。
 4. 如需邮件复习，填写 SMTP 主机、发件账号、收件地址及密码。Gmail 的 SMTP 登录需要应用专用密码，不能直接填写普通账户密码。
@@ -56,7 +56,7 @@ node --test app/src/test/js/*.test.mjs
 
 默认调试构建面向 arm64-v8a，产物位于 `app/build/outputs/apk/debug/`。原生模块首次构建需要下载依赖；可用 `CARGO` 指定 cargo 路径。若发生 Java 堆内存不足，可为 Gradle 配置 `-Xmx4096m` 并限制 worker 数。
 
-发布版：`./gradlew :app:assembleRelease`。需要自行提供签名，通过 `ANDROID_KEYSTORE_FILE`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 配置；不要提交签名文件或口令。当前仓库只发布源码，旧的私人 APK 不属于开源发行物。构建与测试细节见 [验证指南](docs/VALIDATION.md)。
+发布版：`./gradlew :app:assembleRelease`。需要自行提供签名，通过 `ANDROID_KEYSTORE_FILE`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 配置；不要提交签名文件或口令。公开安装包在 Releases 发布，旧的私人 APK 不属于开源发行物。构建与测试细节见 [验证指南](docs/VALIDATION.md)。
 
 ## 隐私与状态
 
@@ -64,7 +64,7 @@ node --test app/src/test/js/*.test.mjs
 
 公开源码从私人开发版分离，删除了个人配置、密钥预置入口、辞典资源和本机脚本，并重新建立提交历史，避免私人 Git 作者邮箱或历史配置进入公开仓库。保留上游许可证、源码版权声明及公共依赖引用。
 
-学习和 Anki 改造的原始开发版曾通过 1946 项 JVM 单元测试及 322 项 JavaScript 测试；**这些数字不是本公开版重新编译或真机验证的结果**。本次公开版已通过 322 项 JavaScript 测试和 19 项学习模型测试（含默认凭据为空的检查）；完整 Android 构建仍待 CI 验证。实际 Anki 写卡、账户邮件投递、墨水屏残影及后台任务时机仍需在目标设备验证；系统省电可能延后每日邮件。
+公开版已通过 1947 项 JVM 单元测试和 322 项 JavaScript 测试，云端 lint 无错误，Android 调试与发布构建成功。发布 APK 已通过签名、架构及个人配置检查；公开测试版尚未完成真机验收。实际 Anki 写卡、账户邮件投递、墨水屏残影及后台任务时机仍需在目标设备验证；系统省电可能延后每日邮件。
 
 ## 来源、许可证与鸣谢
 

@@ -2,7 +2,7 @@
 
 An open-source Android Japanese reading and study app derived from [Hoshi Reader Android](https://github.com/HuangAntimony/Hoshi-Reader-Android), itself a native Android implementation of [Hoshi Reader](https://github.com/Manhhao/Hoshi-Reader).
 
-[中文说明 and build instructions](README.md) · [License](LICENSE) · [Attribution](NOTICE.md) · [Privacy](PRIVACY.md)
+[Download public beta APK](https://github.com/crazysean-11/Hoshi-Study/releases/tag/v1.0.0-beta.1) · [中文说明 and build instructions](README.md) · [License](LICENSE) · [Attribution](NOTICE.md) · [Privacy](PRIVACY.md)
 
 ## Features
 
@@ -16,10 +16,10 @@ An open-source Android Japanese reading and study app derived from [Hoshi Reader
 
 ## Public edition
 
-All API keys, SMTP credentials and email addresses start empty. There is no credential-bundling build task. No personal APKs, signing keys, private build scripts, books or dictionary archives are distributed. The public application ID is `org.hoshistudy.reader`, separate from private builds.
+All API keys, SMTP credentials and email addresses start empty. There is no credential-bundling build task. No personal APKs, signing keys, private build scripts, books or dictionary archives are distributed. Public beta APKs are available from Releases for Android 8.0+ arm64-v8a devices. The public application ID is `org.hoshistudy.reader`, separate from private builds.
 
 This independent derivative retains the upstream GPLv3 license and attribution. Its new source history intentionally excludes private development commits and personal author metadata; upstream provenance and submodule revisions are documented in NOTICE.md.
 
 Build requirements: JDK 21, Android SDK 36.1, NDK 29.0.14206865, CMake 3.31.6, Rust with aarch64-linux-android and cargo-ndk. Clone with `--recurse-submodules`, then run `./gradlew test lint assembleDebug` and `node --test app/src/test/js/*.test.mjs`. Configure your own signing credentials for release builds. See the Chinese README and `docs/VALIDATION.md` for details.
 
-The preceding private development build passed 1946 JVM and 322 JavaScript tests; this is not a claim that this sanitized public edition has been rebuilt or tested on a physical reader. This public source passed 322 JavaScript tests and 19 study-model tests, including blank credential defaults. Full Android build verification remains pending; check CI and validation notes. Real Anki writes, account delivery and e-ink behavior require device validation.
+The public edition passed 1947 JVM tests and 322 JavaScript tests. CI lint, debug and release assembly succeeded. The published APK passed signing, architecture and private-configuration checks. Physical-device validation remains pending; real Anki writes, account delivery and e-ink behavior require device validation.
