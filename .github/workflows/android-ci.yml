@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   test-and-lint:
-    name: Test and lint
+    name: Test, lint and build public APK
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -86,7 +86,28 @@ jobs:
         run: |
           python3 tools/build-transcription-audio.py --check
           ./gradlew --no-daemon -p buildSrc test
-          ./gradlew --no-daemon --no-parallel --max-workers=2 "-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8" test lint assembleDebug
+          ./gradlew --no-daemon --no-parallel --max-workers=2 "-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8" test lint assembleDebug :app:assembleRelease
 
       - name: Reader JavaScript tests
         run: node --test app/src/test/js/*.test.mjs
+
+      - name: Upload unsigned public release for local signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hoshi-Study-1.0.0-arm64-unsigned
+          path: |
+            app/build/outputs/apk/release/app-release-unsigned.apk
+            app/build/outputs/apk/release/output-metadata.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-reports
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/lint-results-debug.xml
+          if-no-files-found: ignore
+          retention-days: 14
