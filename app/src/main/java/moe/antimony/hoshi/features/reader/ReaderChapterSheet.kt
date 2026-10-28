@@ -1,0 +1,383 @@
+package moe.antimony.hoshi.features.reader
+
+import moe.antimony.hoshi.ui.theme.hoshiSurfaces
+import moe.antimony.hoshi.ui.theme.hoshiContainerOutline
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import moe.antimony.hoshi.ui.HoshiAlertDialog as AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import moe.antimony.hoshi.R
+import moe.antimony.hoshi.epub.EpubBook
+import moe.antimony.hoshi.epub.EpubTocItem
+import moe.antimony.hoshi.ui.hoshiOutlinedTextFieldColors
+import moe.antimony.hoshi.ui.hoshiSingleLineTextFieldLineLimits
+import moe.antimony.hoshi.ui.rememberSyncedTextFieldState
+import moe.antimony.hoshi.ui.theme.LocalHoshiEInkMode
+import java.util.Locale
+
+@Composable
+internal fun ReaderGoToBookHeader(
+    book: EpubBook,
+    coverBitmap: ImageBitmap?,
+    currentPosition: ReaderChapterPosition,
+    progressDisplay: ReaderProgressDisplay,
+    onJumpToCharacter: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val progress = book.contentsProgress(currentPosition, progressDisplay)
+    val metrics = readerSheetDensityMetrics()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ReaderChapterCover(
+            coverBitmap = coverBitmap,
+            modifier = Modifier.size(
+                width = metrics.chapterHeaderCoverWidthDp.dp,
+                height = metrics.chapterHeaderCoverHeightDp.dp,
+            ),
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = book.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+            Text(
+                text = progress.book,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = progress.chapter,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        TextButton(onClick = onJumpToCharacter) {
+            Text(stringResource(R.string.reader_jump))
+        }
+    }
+}
+
+internal data class ReaderContentsProgress(
+    val book: String,
+    val chapter: String,
+)
+
+internal fun EpubBook.contentsProgress(
+    position: ReaderChapterPosition,
+    progressDisplay: ReaderProgressDisplay,
+): ReaderContentsProgress {
+    val absoluteCharacter = characterCountAt(position.index, position.progress)
+    val range = tocRangeAt(position)
+    return ReaderContentsProgress(
+        book = readerContentsProgressText(absoluteCharacter, bookInfo.characterCount, progressDisplay),
+        chapter = readerContentsProgressText(range.currentCharacter(absoluteCharacter), range.totalCharacters, progressDisplay),
+    )
+}
+
+private fun readerContentsProgressText(
+    current: Int,
+    total: Int,
+    progressDisplay: ReaderProgressDisplay,
+): String {
+    val percent = if (total > 0) current.toDouble() / total.toDouble() * 100.0 else 0.0
+    return "${progressDisplay.rangeText(current, total)} (${String.format(Locale.US, "%.1f", percent)}%)"
+}
+
+@Composable
+internal fun ReaderChapterCover(
+    coverBitmap: ImageBitmap?,
+    modifier: Modifier = Modifier,
+) {
+    if (coverBitmap != null) {
+        Image(
+            bitmap = coverBitmap,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = modifier.clip(RoundedCornerShape(2.dp)),
+        )
+    } else {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+    }
+}
+
+internal fun EpubBook.decodeCoverImageBitmap(): ImageBitmap? =
+    coverHref
+        ?.let(::readResource)
+        ?.let { bytes -> runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull() }
+        ?.asImageBitmap()
+
+@Composable
+internal fun ReaderChapterListRow(
+    row: ReaderChapterRow,
+    progressDisplay: ReaderProgressDisplay,
+    onClick: () -> Unit,
+) {
+    val eInkMode = LocalHoshiEInkMode.current
+    val isCurrentEInkRow = eInkMode && row.isCurrent
+    val currentRowColor = when {
+        isCurrentEInkRow -> MaterialTheme.colorScheme.onSurface
+        row.isCurrent -> MaterialTheme.colorScheme.secondaryContainer
+        else -> Color.Transparent
+    }
+    val rowContentColor = if (isCurrentEInkRow) {
+        MaterialTheme.colorScheme.surface
+    } else if (row.isCurrent) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val rowMetaColor = if (isCurrentEInkRow) {
+        MaterialTheme.colorScheme.surface
+    } else if (row.isCurrent) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val metrics = readerSheetDensityMetrics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = currentRowColor,
+                shape = RoundedCornerShape(metrics.chapterRowCornerRadiusDp.dp),
+            )
+            .then(if (row.isCurrent) Modifier.hoshiContainerOutline(RoundedCornerShape(metrics.chapterRowCornerRadiusDp.dp)) else Modifier)
+            .clickable(onClick = onClick)
+            .padding(
+                start = (row.indentLevel * 18).dp,
+                top = metrics.chapterRowVerticalPaddingDp.dp,
+                end = 8.dp,
+                bottom = metrics.chapterRowVerticalPaddingDp.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = row.label.ifBlank { stringResource(R.string.reader_untitled_chapter) },
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+            color = rowContentColor,
+        )
+        row.characterCount?.let { count ->
+            Text(
+                text = progressDisplay.countText(count),
+                color = rowMetaColor,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun JumpToCharacterDialog(
+    totalCharacters: Int,
+    progressDisplay: ReaderProgressDisplay,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit,
+) {
+    var input by remember { mutableStateOf("") }
+    val inputScrollState = rememberScrollState()
+    val inputFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val inputState = rememberSyncedTextFieldState(
+        value = input,
+        onValueChange = { input = it.filter(Char::isDigit) },
+        scrollState = inputScrollState,
+    )
+    val target = readerJumpTargetFromInput(
+        input = input,
+        totalCharacters = totalCharacters,
+        progressDisplay = progressDisplay,
+    )
+    LaunchedEffect(inputFocusRequester) {
+        inputFocusRequester.requestFocus()
+        keyboardController?.show()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                stringResource(
+                    if (progressDisplay.usesWords) {
+                        R.string.reader_jump_to_word
+                    } else {
+                        R.string.reader_jump_to_character
+                    },
+                ),
+            )
+        },
+        text = {
+            OutlinedTextField(
+                state = inputState,
+                modifier = Modifier.focusRequester(inputFocusRequester),
+                label = {
+                    Text(
+                        stringResource(
+                            if (progressDisplay.usesWords) {
+                                R.string.reader_word
+                            } else {
+                                R.string.reader_character
+                            },
+                        ),
+                    )
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done,
+                    showKeyboardOnFocus = true,
+                ),
+                onKeyboardAction = {
+                    readerJumpImeAction(
+                        input = input,
+                        totalCharacters = totalCharacters,
+                        progressDisplay = progressDisplay,
+                        onConfirm = onConfirm,
+                        hideKeyboard = { keyboardController?.hide() },
+                    )
+                },
+                lineLimits = hoshiSingleLineTextFieldLineLimits(),
+                scrollState = inputScrollState,
+                colors = hoshiOutlinedTextFieldColors(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = target != null,
+                onClick = {
+                    target?.let(onConfirm)
+                },
+            ) {
+                Text(stringResource(R.string.reader_jump))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
+}
+
+internal data class ReaderChapterRow(
+    val label: String,
+    val spineIndex: Int,
+    val fragment: String?,
+    val characterCount: Int?,
+    val isCurrent: Boolean,
+    val indentLevel: Int,
+)
+
+internal fun EpubBook.chapterRows(currentCharacter: Int): List<ReaderChapterRow> {
+    val tocRows = toc.flatMap { item ->
+        flattenChapterRows(item, indentLevel = 0)
+    }
+    val rows = if (tocRows.isNotEmpty()) tocRows else chapters.mapIndexed { index, chapter ->
+        ReaderChapterRow(
+            label = chapter.href.substringAfterLast('/').substringBeforeLast('.').ifBlank { title },
+            spineIndex = index,
+            fragment = null,
+            characterCount = bookInfo.chapterInfo[chapter.href]?.currentTotal,
+            isCurrent = false,
+            indentLevel = 0,
+        )
+    }
+    val currentRowIndex = rows.indexOfLast { (it.characterCount ?: Int.MAX_VALUE) <= currentCharacter }
+    return rows.mapIndexed { index, row -> row.copy(isCurrent = index == currentRowIndex) }
+}
+
+private fun EpubBook.flattenChapterRows(
+    item: EpubTocItem,
+    indentLevel: Int,
+): List<ReaderChapterRow> {
+    val row = item.href?.let { href ->
+        val spineIndex = chapterIndexForHref(href) ?: return@let null
+        ReaderChapterRow(
+            label = item.label,
+            spineIndex = spineIndex,
+            fragment = href.substringAfter('#', "").ifBlank { null },
+            characterCount = tocCharacterStart(href),
+            isCurrent = false,
+            indentLevel = indentLevel,
+        )
+    }
+    return listOfNotNull(row) + item.children.flatMap { child ->
+        flattenChapterRows(child, indentLevel = indentLevel + 1)
+    }
+}
+
+private fun EpubBook.chapterIndexForHref(href: String): Int? {
+    val tocPath = href.readerHrefBase()
+    if (tocPath.isBlank()) return null
+    return chapters.indexOfFirst { chapter ->
+        val chapterPath = chapter.href.readerHrefBase()
+        tocPath == chapterPath ||
+            tocPath.endsWith("/$chapterPath") ||
+            chapterPath.endsWith("/$tocPath")
+    }.takeIf { it >= 0 }
+}
+
+internal fun EpubBook.chapterPositionForCharacter(characterCount: Int): ReaderChapterPosition {
+    val targetCharacter = characterCount.coerceIn(0, bookInfo.characterCount)
+    val chapterEntries = chapters.mapIndexedNotNull { index, chapter ->
+        bookInfo.chapterInfo[chapter.href]?.let { info -> index to info }
+    }
+    val (index, info) = chapterEntries.lastOrNull { (_, info) -> info.currentTotal <= targetCharacter }
+        ?: chapterEntries.firstOrNull()
+        ?: return ReaderChapterPosition(index = 0)
+    val progress = if (info.chapterCount <= 0) {
+        0.0
+    } else {
+        (targetCharacter - info.currentTotal).toDouble() / info.chapterCount.toDouble()
+    }
+    return ReaderChapterPosition(index = index, progress = progress.coerceIn(0.0, 1.0))
+}

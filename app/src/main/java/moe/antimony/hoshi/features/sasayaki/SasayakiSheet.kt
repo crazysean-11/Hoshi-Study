@@ -1,0 +1,1185 @@
+package moe.antimony.hoshi.features.sasayaki
+
+import moe.antimony.hoshi.ui.theme.hoshiContainerOutline
+import moe.antimony.hoshi.ui.theme.LocalHoshiEInkMode
+import moe.antimony.hoshi.ui.theme.hoshiContainerBorder
+import moe.antimony.hoshi.ui.theme.hoshiSurfaces
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FastRewind
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import moe.antimony.hoshi.ui.HoshiButton as Button
+import moe.antimony.hoshi.ui.HoshiDropdownMenu as DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import java.io.File
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import moe.antimony.hoshi.R
+import moe.antimony.hoshi.epub.SasayakiMatchData
+import moe.antimony.hoshi.epub.SasayakiPlaybackData
+import moe.antimony.hoshi.features.reader.ReaderBottomPanel
+import moe.antimony.hoshi.features.reader.ReaderColorPickerDialog
+import moe.antimony.hoshi.features.reader.ReaderColorSettingRow
+import moe.antimony.hoshi.features.reader.readerSheetDensityMetrics
+import moe.antimony.hoshi.features.reader.readerSheetStyle
+import moe.antimony.hoshi.importing.ImportFileType
+import moe.antimony.hoshi.importing.OpenDocumentContent
+import moe.antimony.hoshi.importing.localizedImportMessage
+import moe.antimony.hoshi.importing.validateImportFile
+import moe.antimony.hoshi.ui.HoshiBlockingProgressOverlay
+import moe.antimony.hoshi.ui.asString
+import moe.antimony.hoshi.ui.rememberInitiallyCenteredLazyListState
+
+internal val SasayakiSpeedSliderRange = 0.5f..3.0f
+internal const val SasayakiSpeedSliderSteps = 49
+internal const val SasayakiAudiobookCoverWidthDp = 68
+internal const val SasayakiAudiobookCoverHeightDp = 68
+internal val SasayakiSheetTabRole = Role.Tab
+
+@Composable
+internal fun SasayakiSheet(
+    player: SasayakiPlayer,
+    audioRepository: SasayakiAudioRepository,
+    settings: SasayakiSettings,
+    bookTitle: String,
+    bookCoverFile: File?,
+    audiobookInfo: SasayakiAudiobookInfo,
+    subtitleMatchData: SasayakiMatchData?,
+    matchDependencies: SasayakiMatchDependencies?,
+    selectedTab: SasayakiSheetTab,
+    onSelectedTabChange: (SasayakiSheetTab) -> Unit,
+    onSubtitleMatchUpdated: (SasayakiMatchData) -> Unit,
+    onSettingsChange: (SasayakiSettings) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    transcriptionState: SasayakiTranscriptionUiState,
+    transcriptionViewModel: SasayakiTranscriptionViewModel,
+    subtitleExportViewModel: SasayakiSubtitleExportViewModel,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val sheetStyle = readerSheetStyle()
+    var subtitleMatching by remember { mutableStateOf(false) }
+    var isImporting by remember { mutableStateOf(false) }
+    var importError by remember { mutableStateOf<String?>(null) }
+    var skipActionMenuExpanded by remember { mutableStateOf(false) }
+    var colorDialogRow by remember { mutableStateOf<SasayakiColorRow?>(null) }
+    val currentChapter = SasayakiAudiobookChapters.currentChapterAt(audiobookInfo.chapters, player.currentTime)
+    val importFailedMessage = stringResource(R.string.sasayaki_import_audiobook_failed)
+    val importer = rememberLauncherForActivityResult(OpenDocumentContent()) { uri ->
+        if (uri == null || isImporting || transcriptionState.controlsLocked || subtitleMatching) return@rememberLauncherForActivityResult
+        isImporting = true
+        importError = null
+        val previousPlayback = player.playback
+        scope.launch {
+            runCatching {
+                val copyToPrivateStorage = settings.copyAudiobookToPrivateStorage
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.validateImportFile(uri, ImportFileType.SasayakiAudiobook)
+                    if (copyToPrivateStorage) {
+                        audioRepository.importAudio(context.contentResolver, uri)
+                    } else {
+                        context.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                        null
+                    }
+                }
+            }.onSuccess { copiedFileName ->
+                player.importAudio(
+                    audioUri = uri,
+                    copiedAudioFileName = copiedFileName,
+                )
+                if ((previousPlayback.audioFileName != null && previousPlayback.audioFileName != copiedFileName) ||
+                    (previousPlayback.audioUri != null && (copiedFileName != null || previousPlayback.audioUri != uri.toString()))
+                ) {
+                    withContext(Dispatchers.IO) {
+                        runCatching { audioRepository.clearAudioSource(previousPlayback, context.contentResolver) }
+                    }
+                }
+            }.onFailure { error ->
+                importError = error.localizedImportMessage(context, importFailedMessage)
+            }
+            isImporting = false
+        }
+    }
+
+    ReaderBottomPanel(
+        sheetStyle = sheetStyle,
+        onDismiss = {
+            if (!isImporting) {
+                onDismiss()
+            }
+        },
+        modifier = modifier,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (sasayakiShouldShowPlaybackHeader(player.hasAudio)) {
+                    SasayakiPlaybackHeader(
+                        player = player,
+                        bookTitle = bookTitle,
+                        bookCoverFile = bookCoverFile,
+                        audiobookInfo = audiobookInfo,
+                        currentChapter = currentChapter,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+                    )
+                }
+                SasayakiSheetTabs(
+                    selectedTab = selectedTab,
+                    onSelectedTabChange = onSelectedTabChange,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 10.dp),
+                )
+                when (selectedTab) {
+                    SasayakiSheetTab.Resources -> SasayakiResourcesTab(
+                        bookTitle = bookTitle,
+                        subtitleExportViewModel = subtitleExportViewModel,
+                        player = player,
+                        settings = settings,
+                        subtitleMatchData = subtitleMatchData,
+                        matchDependencies = matchDependencies,
+                        importError = importError,
+                        isImporting = isImporting,
+                        transcriptionState = transcriptionState,
+                        subtitleMatching = subtitleMatching,
+                        onMatchModeChange = transcriptionViewModel::selectMode,
+                        onSubtitleMatchingChange = { subtitleMatching = it },
+                        onStartTranscription = { transcriptionViewModel.start(settings.transcriptionPreset) },
+                        onPauseTranscription = transcriptionViewModel::pause,
+                        onConfirmDownload = transcriptionViewModel::confirmDownload,
+                        onRequestClearTranscription = transcriptionViewModel::requestClear,
+                        onDismissClearTranscription = transcriptionViewModel::dismissClear,
+                        onConfirmClearTranscription = transcriptionViewModel::confirmClear,
+                        onAudioAction = {
+                            if (player.hasAudio) {
+                                player.clearAudio()
+                            } else {
+                                importer.launch(ImportFileType.SasayakiAudiobook.mimeTypes)
+                            }
+                        },
+                        onSettingsChange = onSettingsChange,
+                        onSubtitleMatchUpdated = onSubtitleMatchUpdated,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SasayakiSheetTab.Chapters -> SasayakiChaptersTab(
+                        chapters = audiobookInfo.chapters,
+                        currentChapter = currentChapter,
+                        onChapterJump = { chapter -> player.seekTo(chapter.startSeconds) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SasayakiSheetTab.Settings -> SasayakiSettingsTab(
+                        player = player,
+                        settings = settings,
+                        skipActionMenuExpanded = skipActionMenuExpanded,
+                        onSkipActionMenuExpandedChange = { skipActionMenuExpanded = it },
+                        onSettingsChange = onSettingsChange,
+                        onColorRowClick = { colorDialogRow = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            if (isImporting) {
+                HoshiBlockingProgressOverlay(
+                    message = stringResource(R.string.sasayaki_importing_audio),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+    colorDialogRow?.let { row ->
+        ReaderColorPickerDialog(
+            title = stringResource(row.labelRes),
+            initialColor = row.color(settings),
+            defaultColor = row.defaultColor,
+            onColorChange = { color ->
+                onSettingsChange(row.updated(settings, color))
+                colorDialogRow = null
+            },
+            onDismiss = { colorDialogRow = null },
+        )
+    }
+}
+
+@Composable
+private fun SasayakiPlaybackHeader(
+    player: SasayakiPlayer,
+    bookTitle: String,
+    bookCoverFile: File?,
+    audiobookInfo: SasayakiAudiobookInfo,
+    currentChapter: SasayakiAudiobookChapter?,
+    modifier: Modifier = Modifier,
+) {
+    val headerInfo = sasayakiPlaybackHeaderInfo(
+        playback = player.playback,
+        metadata = audiobookInfo.metadata,
+        fallbackBookTitle = bookTitle,
+        currentChapter = currentChapter,
+    )
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SasayakiAudiobookCover(
+                metadata = audiobookInfo.metadata,
+                fallbackCoverFile = bookCoverFile,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = headerInfo.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                headerInfo.artist?.let { artist ->
+                    Text(
+                        text = artist,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                headerInfo.chapterTitle?.let { chapterTitle ->
+                    Text(
+                        text = chapterTitle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+        SasayakiPlaybackProgress(
+            player = player,
+            inspectedDurationSeconds = audiobookInfo.durationSeconds,
+        )
+    }
+}
+
+@Composable
+private fun SasayakiAudiobookCover(
+    metadata: SasayakiAudiobookMetadata,
+    fallbackCoverFile: File?,
+) {
+    val coverBitmap = rememberSasayakiCoverBitmap(metadata, fallbackCoverFile)
+    val frameModifier = Modifier
+        .size(
+            width = SasayakiAudiobookCoverWidthDp.dp,
+            height = SasayakiAudiobookCoverHeightDp.dp,
+        )
+        .clip(RoundedCornerShape(8.dp))
+    Box(
+        modifier = if (coverBitmap == null) {
+            frameModifier.background(MaterialTheme.colorScheme.surfaceVariant)
+        } else {
+            frameModifier
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (coverBitmap != null) {
+            Image(
+                bitmap = coverBitmap.asImageBitmap(),
+                contentDescription = stringResource(R.string.sasayaki_audiobook_cover),
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Album,
+                contentDescription = stringResource(R.string.sasayaki_audiobook_cover),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberSasayakiCoverBitmap(
+    metadata: SasayakiAudiobookMetadata,
+    fallbackCoverFile: File?,
+): Bitmap? {
+    var bitmap by remember(metadata.artworkData, fallbackCoverFile?.absolutePath) {
+        mutableStateOf<Bitmap?>(null)
+    }
+    LaunchedEffect(metadata.artworkData, fallbackCoverFile?.absolutePath) {
+        bitmap = withContext(Dispatchers.IO) {
+            metadata.artworkData?.let(::decodeSampledSasayakiCoverBitmap)
+                ?: fallbackCoverFile?.let(::decodeSampledSasayakiCoverBitmap)
+        }
+    }
+    return bitmap
+}
+
+@Composable
+private fun SasayakiPlaybackProgress(
+    player: SasayakiPlayer,
+    inspectedDurationSeconds: Double?,
+) {
+    val duration = sasayakiPlaybackDuration(
+        playerDuration = player.duration,
+        inspectedDuration = inspectedDurationSeconds,
+    )
+    val canSeek = player.hasAudio && duration > 0.0
+    val rangeEnd = duration.toFloat().coerceAtLeast(1f)
+    var isScrubbing by remember { mutableStateOf(false) }
+    var sliderValue by remember { mutableFloatStateOf(0f) }
+    val currentTime = player.currentTime
+        .nonNegativeFiniteSeconds()
+        .coerceAtMost(duration.takeIf { it > 0.0 } ?: Double.MAX_VALUE)
+
+    LaunchedEffect(currentTime, rangeEnd, isScrubbing) {
+        if (!isScrubbing) {
+            sliderValue = currentTime.toFloat().coerceIn(0f, rangeEnd)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+    ) {
+        Slider(
+            value = sliderValue.coerceIn(0f, rangeEnd),
+            enabled = canSeek,
+            onValueChange = { value ->
+                isScrubbing = true
+                sliderValue = value.coerceIn(0f, rangeEnd)
+            },
+            onValueChangeFinished = {
+                if (canSeek) {
+                    player.seekTo(sliderValue.toDouble())
+                }
+                isScrubbing = false
+            },
+            valueRange = 0f..rangeEnd,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = formatDuration(if (isScrubbing) sliderValue.toDouble() else currentTime),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    enabled = player.hasAudio,
+                    onClick = player::previousCue,
+                ) {
+                    Icon(Icons.Rounded.FastRewind, contentDescription = stringResource(R.string.sasayaki_previous_cue))
+                }
+                IconButton(
+                    enabled = player.hasAudio,
+                    onClick = player::togglePlayback,
+                ) {
+                    Icon(
+                        if (player.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (player.isPlaying) {
+                            stringResource(R.string.sasayaki_pause)
+                        } else {
+                            stringResource(R.string.sasayaki_play)
+                        },
+                    )
+                }
+                IconButton(
+                    enabled = player.hasAudio,
+                    onClick = player::nextCue,
+                ) {
+                    Icon(Icons.Rounded.FastForward, contentDescription = stringResource(R.string.sasayaki_next_cue))
+                }
+            }
+            Text(
+                text = formatDuration(duration),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SasayakiSheetTabs(
+    selectedTab: SasayakiSheetTab,
+    onSelectedTabChange: (SasayakiSheetTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .selectableGroup()
+            .background(hoshiSurfaces.nested, RoundedCornerShape(12.dp))
+            .hoshiContainerOutline(RoundedCornerShape(12.dp))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        SasayakiSheetTab.entries.forEach { tab ->
+            val selected = tab == selectedTab
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(
+                        color = if (selected) hoshiSurfaces.selected else Color.Transparent,
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    .then(if (selected) Modifier.hoshiContainerOutline(RoundedCornerShape(10.dp)) else Modifier)
+                    .selectable(
+                        selected = selected,
+                        role = SasayakiSheetTabRole,
+                        onClick = { onSelectedTabChange(tab) },
+                    )
+                    .padding(vertical = 7.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = stringResource(tab.labelRes),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (selected) hoshiSurfaces.onSelected else hoshiSurfaces.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SasayakiResourcesTab(
+    bookTitle: String,
+    subtitleExportViewModel: SasayakiSubtitleExportViewModel,
+    player: SasayakiPlayer,
+    settings: SasayakiSettings,
+    subtitleMatchData: SasayakiMatchData?,
+    matchDependencies: SasayakiMatchDependencies?,
+    importError: String?,
+    isImporting: Boolean,
+    transcriptionState: SasayakiTranscriptionUiState,
+    subtitleMatching: Boolean,
+    onMatchModeChange: (SasayakiMatchMode) -> Unit,
+    onSubtitleMatchingChange: (Boolean) -> Unit,
+    onStartTranscription: () -> Unit,
+    onPauseTranscription: () -> Unit,
+    onConfirmDownload: () -> Unit,
+    onRequestClearTranscription: () -> Unit,
+    onDismissClearTranscription: () -> Unit,
+    onConfirmClearTranscription: () -> Unit,
+    onAudioAction: () -> Unit,
+    onSettingsChange: (SasayakiSettings) -> Unit,
+    onSubtitleMatchUpdated: (SasayakiMatchData) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 28.dp),
+    ) {
+        SasayakiAudiobookResourceCard(
+            player = player,
+            settings = settings,
+            isImporting = isImporting,
+            enabled = !transcriptionState.controlsLocked && !subtitleMatching,
+            onSettingsChange = onSettingsChange,
+            onAction = onAudioAction,
+        )
+        importError?.let { message ->
+            SasayakiErrorMessage(message = message)
+        }
+        player.errorMessage?.let { message ->
+            SasayakiErrorMessage(message = message.asString())
+        }
+        SasayakiResourceCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        stringResource(R.string.sasayaki_current_match),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        sasayakiSubtitleMatchSummary(subtitleMatchData, matchDependencies?.characterCount)
+                            ?: stringResource(R.string.sasayaki_no_subtitle_match),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                SasayakiSubtitleExportControl(bookTitle, subtitleMatchData, subtitleExportViewModel)
+            }
+        }
+        SasayakiMatchModeControl(
+            selected = transcriptionState.mode,
+            enabled = !isImporting && !subtitleMatching && !transcriptionState.controlsLocked,
+            onSelected = onMatchModeChange,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        when (transcriptionState.mode) {
+            SasayakiMatchMode.Subtitles -> SasayakiSubtitleMatchSection(
+                dependencies = matchDependencies,
+                onMatchUpdated = onSubtitleMatchUpdated,
+                enabled = !isImporting && !transcriptionState.controlsLocked,
+                onMatchingChange = onSubtitleMatchingChange,
+            )
+            SasayakiMatchMode.Transcription -> SasayakiTranscriptionSection(
+                state = transcriptionState,
+                preset = settings.transcriptionPreset,
+                onPresetChange = { onSettingsChange(settings.copy(transcriptionPreset = it)) },
+                enabled = !isImporting && !subtitleMatching,
+                onStart = onStartTranscription,
+                onPause = onPauseTranscription,
+                onConfirmDownload = onConfirmDownload,
+                onRequestClear = onRequestClearTranscription,
+                onDismissClear = onDismissClearTranscription,
+                onConfirmClear = onConfirmClearTranscription,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SasayakiAudiobookResourceCard(
+    player: SasayakiPlayer,
+    settings: SasayakiSettings,
+    isImporting: Boolean,
+    enabled: Boolean,
+    onSettingsChange: (SasayakiSettings) -> Unit,
+    onAction: () -> Unit,
+) {
+    SasayakiResourceCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.sasayaki_audiobook_resource),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = player.playback.audioStorageSummaryText(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Button(
+                enabled = enabled && !isImporting,
+                onClick = onAction,
+            ) {
+                Text(
+                    if (player.hasAudio) {
+                        stringResource(R.string.sasayaki_remove_audio)
+                    } else if (isImporting) {
+                        stringResource(R.string.reader_appearance_importing)
+                    } else {
+                        stringResource(R.string.action_open)
+                    },
+                )
+            }
+        }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.sasayaki_copy_audiobook_to_storage),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = settings.copyAudiobookToPrivateStorage,
+                enabled = enabled && !isImporting,
+                onCheckedChange = { onSettingsChange(settings.copy(copyAudiobookToPrivateStorage = it)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SasayakiChaptersTab(
+    chapters: List<SasayakiAudiobookChapter>,
+    currentChapter: SasayakiAudiobookChapter?,
+    onChapterJump: (SasayakiAudiobookChapter) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (chapters.isEmpty()) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.sasayaki_no_chapters),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        return
+    }
+    val centeredListState = rememberInitiallyCenteredLazyListState(
+        targetIndex = sasayakiCurrentChapterListIndex(chapters, currentChapter),
+        itemCount = chapters.size,
+    )
+    LazyColumn(
+        state = centeredListState.listState,
+        userScrollEnabled = centeredListState.contentVisible,
+        modifier = modifier
+            .fillMaxWidth()
+            .alpha(if (centeredListState.contentVisible) 1f else 0f),
+        contentPadding = PaddingValues(bottom = 28.dp),
+    ) {
+        items(chapters, key = { chapter -> chapter.index }) { chapter ->
+            SasayakiChapterRow(
+                chapter = chapter,
+                selected = chapter.index == currentChapter?.index,
+                onClick = { onChapterJump(chapter) },
+            )
+        }
+    }
+}
+
+internal fun sasayakiCurrentChapterListIndex(
+    chapters: List<SasayakiAudiobookChapter>,
+    currentChapter: SasayakiAudiobookChapter?,
+): Int? = currentChapter?.let { current ->
+    chapters.indexOfFirst { it.index == current.index }.takeIf { it >= 0 }
+}
+
+@Composable
+private fun SasayakiChapterRow(
+    chapter: SasayakiAudiobookChapter,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val rowInfo = sasayakiChapterRowInfo(chapter)
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            Color.Transparent
+        },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = rowInfo.title ?: stringResource(R.string.sasayaki_unknown_chapter),
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (selected) {
+                    Text(
+                        text = stringResource(R.string.sasayaki_current_chapter),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Text(
+                text = formatSasayakiChapterRowTime(rowInfo.startSeconds),
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                textAlign = TextAlign.End,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SasayakiSettingsTab(
+    player: SasayakiPlayer,
+    settings: SasayakiSettings,
+    skipActionMenuExpanded: Boolean,
+    onSkipActionMenuExpandedChange: (Boolean) -> Unit,
+    onSettingsChange: (SasayakiSettings) -> Unit,
+    onColorRowClick: (SasayakiColorRow) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 28.dp),
+    ) {
+        SliderRow(
+            label = stringResource(R.string.sasayaki_delay),
+            valueText = String.format(Locale.US, "%+.2fs", player.delay),
+            value = player.delay.toFloat(),
+            range = -4f..4f,
+            steps = 159,
+            onValueChange = { player.setDelay(it.toDouble()) },
+        )
+        SliderRow(
+            label = stringResource(R.string.sasayaki_speed),
+            valueText = String.format(Locale.US, "%.2fx", player.rate),
+            value = player.rate,
+            range = SasayakiSpeedSliderRange,
+            steps = SasayakiSpeedSliderSteps,
+            onValueChange = { player.setRate(it) },
+        )
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        Text(
+            text = stringResource(R.string.sasayaki_reader_controls),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        )
+        SasayakiSettingsSwitchRow(
+            label = stringResource(R.string.sasayaki_show_bottom_playback_controls),
+            checked = settings.showReaderBottomPlaybackControls,
+            onCheckedChange = { onSettingsChange(settings.copy(showReaderBottomPlaybackControls = it)) },
+        )
+        if (settings.showReaderBottomPlaybackControls) {
+            SasayakiSettingsSwitchRow(
+                label = stringResource(R.string.sasayaki_reverse_vertical_skip_buttons),
+                checked = settings.reverseVerticalReaderSkipButtons,
+                onCheckedChange = { onSettingsChange(settings.copy(reverseVerticalReaderSkipButtons = it)) },
+            )
+        }
+        SasayakiSettingsActionRow(
+            label = stringResource(R.string.sasayaki_skip_action),
+            selected = settings.readerSkipButtonAction,
+            expanded = skipActionMenuExpanded,
+            onExpandedChange = onSkipActionMenuExpandedChange,
+            onSelected = { action ->
+                onSkipActionMenuExpandedChange(false)
+                onSettingsChange(settings.copy(readerSkipButtonAction = action))
+            },
+        )
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        Text(
+            text = stringResource(R.string.sasayaki_playback),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        )
+        SasayakiSettingsSwitchRow(
+            label = stringResource(R.string.sasayaki_auto_scroll),
+            checked = settings.autoScroll,
+            onCheckedChange = { onSettingsChange(settings.copy(autoScroll = it)) },
+        )
+        SliderRow(
+            label = stringResource(R.string.sasayaki_image_hold),
+            valueText = sasayakiImageHoldText(settings.imageHoldSeconds),
+            value = normalizeSasayakiImageHoldSeconds(settings.imageHoldSeconds),
+            range = SasayakiImageHoldMinSeconds..SasayakiImageHoldMaxSeconds,
+            steps = SasayakiImageHoldSliderSteps,
+            onValueChange = {
+                onSettingsChange(settings.copy(imageHoldSeconds = normalizeSasayakiImageHoldSeconds(it)))
+            },
+        )
+        SasayakiSettingsSwitchRow(
+            label = stringResource(R.string.sasayaki_auto_pause_on_lookup),
+            checked = settings.autoPause,
+            onCheckedChange = { onSettingsChange(settings.copy(autoPause = it)) },
+        )
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        SasayakiColorSheetSection(
+            title = stringResource(R.string.sasayaki_light_theme),
+            rows = SasayakiColorRow.lightRows,
+            settings = settings,
+            onRowClick = onColorRowClick,
+        )
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        SasayakiColorSheetSection(
+            title = stringResource(R.string.sasayaki_dark_theme),
+            rows = SasayakiColorRow.darkRows,
+            settings = settings,
+            onRowClick = onColorRowClick,
+        )
+    }
+}
+
+@Composable
+private fun SasayakiColorSheetSection(
+    title: String,
+    rows: List<SasayakiColorRow>,
+    settings: SasayakiSettings,
+    onRowClick: (SasayakiColorRow) -> Unit,
+) {
+    Text(
+        text = title,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+    )
+    rows.forEach { row ->
+        ReaderColorSettingRow(
+            label = stringResource(row.labelRes),
+            color = row.color(settings),
+            onClick = { onRowClick(row) },
+            horizontalPadding = 20.dp,
+        )
+    }
+}
+
+@Composable
+private fun SliderRow(
+    label: String,
+    valueText: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    onValueChange: (Float) -> Unit,
+) {
+    val metrics = readerSheetDensityMetrics()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = metrics.sasayakiSliderVerticalPaddingDp.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f))
+            Text(valueText, fontWeight = FontWeight.SemiBold)
+        }
+        Slider(value = value, onValueChange = onValueChange, valueRange = range, steps = steps)
+    }
+}
+
+@Composable
+internal fun SasayakiResourceCard(content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = hoshiSurfaces.group,
+        border = hoshiContainerBorder(),
+        tonalElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+internal fun SasayakiInlineActionRow(
+    label: String,
+    value: String,
+    action: String,
+    actionEnabled: Boolean,
+    onAction: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = value,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(enabled = actionEnabled, onClick = onAction) {
+            Text(action)
+        }
+    }
+}
+
+@Composable
+private fun SasayakiSettingsActionRow(
+    label: String,
+    selected: SasayakiReaderSkipButtonAction,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onSelected: (SasayakiReaderSkipButtonAction) -> Unit,
+) {
+    val metrics = readerSheetDensityMetrics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = metrics.sasayakiRowVerticalPaddingDp.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Box {
+            TextButton(onClick = { onExpandedChange(true) }) {
+                Text(selected.labelText())
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { onExpandedChange(false) },
+            ) {
+                SasayakiReaderSkipButtonAction.entries.forEach { action ->
+                    DropdownMenuItem(
+                        text = { Text(action.labelText()) },
+                        onClick = { onSelected(action) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SasayakiSettingsSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val metrics = readerSheetDensityMetrics()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = metrics.sasayakiRowVerticalPaddingDp.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+@Composable
+private fun SasayakiErrorMessage(message: String) {
+    Text(
+        text = message,
+        color = MaterialTheme.colorScheme.error,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+    )
+}
+
+private fun formatDuration(seconds: Double): String {
+    val totalSeconds = seconds.nonNegativeFiniteSeconds().toLong()
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val remainingSeconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, remainingSeconds)
+    } else {
+        String.format(Locale.US, "%d:%02d", minutes, remainingSeconds)
+    }
+}
+
+internal data class SasayakiChapterRowInfo(
+    val title: String?,
+    val startSeconds: Double,
+)
+
+internal fun sasayakiChapterRowInfo(chapter: SasayakiAudiobookChapter): SasayakiChapterRowInfo =
+    SasayakiChapterRowInfo(
+        title = chapter.title.trim().takeIf { it.isNotBlank() },
+        startSeconds = chapter.startSeconds,
+    )
+
+internal fun formatSasayakiChapterRowTime(seconds: Double): String =
+    formatDuration(seconds)
+
+private fun Double.nonNegativeFiniteSeconds(): Double =
+    if (isFinite()) coerceAtLeast(0.0) else 0.0
+
+internal fun sasayakiPlaybackDuration(
+    playerDuration: Double,
+    inspectedDuration: Double?,
+): Double =
+    playerDuration.nonNegativeFiniteSeconds().takeIf { it > 0.0 }
+        ?: inspectedDuration?.nonNegativeFiniteSeconds()?.takeIf { it > 0.0 }
+        ?: 0.0
+
+internal data class SasayakiPlaybackHeaderInfo(
+    val title: String,
+    val artist: String?,
+    val chapterTitle: String?,
+)
+
+internal fun sasayakiPlaybackHeaderInfo(
+    playback: SasayakiPlaybackData,
+    metadata: SasayakiAudiobookMetadata,
+    fallbackBookTitle: String,
+    currentChapter: SasayakiAudiobookChapter?,
+): SasayakiPlaybackHeaderInfo {
+    val normalizedMetadata = metadata.normalized()
+    return SasayakiPlaybackHeaderInfo(
+        title = normalizedMetadata.title
+            ?: playback.audioSourceDisplayTitle()
+            ?: fallbackBookTitle.trim().takeIf { it.isNotBlank() }
+            ?: "",
+        artist = normalizedMetadata.artist,
+        chapterTitle = currentChapter?.title?.trim()?.takeIf { it.isNotBlank() },
+    )
+}
+
+private fun SasayakiPlaybackData.audioSourceDisplayTitle(): String? =
+    audioFileName?.audioSourceNameTitle()
+
+private fun String.audioSourceNameTitle(): String? {
+    val name = substringBefore('?')
+        .substringBefore('#')
+        .substringAfterLast('/')
+        .trim()
+    val title = name.substringBeforeLast('.', missingDelimiterValue = name)
+        .trim()
+        .takeIf { it.isNotBlank() }
+        ?.takeUnless { it.equals("sasayaki_audio", ignoreCase = true) || it.startsWith("sasayaki_audio_", ignoreCase = true) }
+    return title
+}
+
+private const val SasayakiCoverMaxDimensionPx = 512
+
+private fun decodeSampledSasayakiCoverBitmap(file: File): Bitmap? {
+    if (!file.isFile) return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.absolutePath, bounds)
+    return BitmapFactory.decodeFile(
+        file.absolutePath,
+        BitmapFactory.Options().apply {
+            inSampleSize = sasayakiCoverSampleSize(bounds.outWidth, bounds.outHeight)
+        },
+    )
+}
+
+private fun decodeSampledSasayakiCoverBitmap(data: ByteArray): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+    return BitmapFactory.decodeByteArray(
+        data,
+        0,
+        data.size,
+        BitmapFactory.Options().apply {
+            inSampleSize = sasayakiCoverSampleSize(bounds.outWidth, bounds.outHeight)
+        },
+    )
+}
+
+private fun sasayakiCoverSampleSize(width: Int, height: Int): Int {
+    val largest = maxOf(width, height)
+    if (largest <= SasayakiCoverMaxDimensionPx || largest <= 0) return 1
+    var sampleSize = 1
+    while (largest / (sampleSize * 2) >= SasayakiCoverMaxDimensionPx) {
+        sampleSize *= 2
+    }
+    return sampleSize
+}
+
+@Composable
+private fun SasayakiPlaybackData.audioStorageSummaryText(): String =
+    when {
+        audioFileName != null -> stringResource(R.string.sasayaki_storage_copied)
+        audioUri != null -> stringResource(R.string.sasayaki_storage_linked)
+        else -> stringResource(R.string.sasayaki_storage_select_audio)
+    }

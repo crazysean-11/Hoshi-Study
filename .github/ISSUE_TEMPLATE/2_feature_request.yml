@@ -1,0 +1,23 @@
+name: Feature Request
+description: Request an Android-specific feature or change
+title: '[Feature Request]: '
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: >-
+        Describe the current problem, the use case, and the behavior you want.
+    validations:
+      required: true
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      description: Issues disregarding this section may be closed.
+      options:
+        - label: >-
+            I have searched the existing issues and this is NOT a duplicate of
+            an already open or closed issue.
+          required: true

@@ -1,0 +1,881 @@
+package moe.antimony.hoshi.dictionary
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.CancellationException
+import moe.antimony.hoshi.content.ContentLanguageProfile
+import moe.antimony.hoshi.profiles.ProfileRepository
+import org.junit.Assert.assertThrows
+
+class DictionaryRepositoryTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun repositoryMutationsPersistStorageConfigAndRebuildLookupPaths() {
+        val filesDir = temporaryFolder.newFolder("files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = RecordingDictionaryNativeBridge()
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "First", "First")
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "Second", "Second")
+        writeDictionary(storage.typeDirectory(DictionaryType.Frequency), "Freq", "Freq")
+        writeDictionary(storage.typeDirectory(DictionaryType.Pitch), "Pitch", "Pitch")
+        writeDictionary(storage.typeDirectory(DictionaryType.Kanji), "KANJIDIC", "KANJIDIC")
+
+        repository.setDictionaryEnabled(DictionaryType.Term, "Second", enabled = false)
+
+        val termDictionaries = repository.loadDictionaries(DictionaryType.Term).associateBy { it.path.name }
+        assertEquals(setOf("First", "Second"), termDictionaries.keys)
+        assertEquals(true, termDictionaries.getValue("First").isEnabled)
+        assertEquals(false, termDictionaries.getValue("Second").isEnabled)
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Term/First").absolutePath), bridge.termPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Frequency/Freq").absolutePath), bridge.freqPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Pitch/Pitch").absolutePath), bridge.pitchPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Kanji/KANJIDIC").absolutePath), bridge.kanjiPaths.toList())
+
+        repository.setDictionaryCategory("First", DictionaryCategory.Exclude)
+
+        assertEquals(emptyList<String>(), bridge.termPaths.toList())
+        assertEquals(DictionaryCategory.Exclude, repository.loadDictionaries(DictionaryType.Term).first { it.path.name == "First" }.category)
+
+        repository.deleteDictionary(DictionaryType.Frequency, "Freq")
+
+        assertEquals(emptyList<String>(), repository.loadDictionaries(DictionaryType.Frequency).map { it.path.name })
+        assertEquals(emptyList<String>(), bridge.freqPaths.toList())
+    }
+
+    @Test
+    fun failedCategoryRebuildRollsBackPersistedCategoryAndKeepsCurrentLookupSession() {
+        val filesDir = temporaryFolder.newFolder("category-rollback-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = RecordingDictionaryNativeBridge()
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "First", "First")
+        storage.saveConfigFromStorage()
+        repository.rebuildLookupQuery()
+        bridge.failNextRebuild = true
+
+        assertThrows(IllegalStateException::class.java) {
+            repository.setDictionaryCategory("First", DictionaryCategory.Exclude)
+        }
+
+        assertEquals(
+            DictionaryCategory.None,
+            repository.loadDictionaries(DictionaryType.Term).single().category,
+        )
+        assertEquals(
+            listOf(filesDir.resolve("Dictionaries/Term/First").absolutePath),
+            bridge.termPaths.toList(),
+        )
+    }
+
+    @Test
+    fun lookupQueryReadyRebuildsPersistedDictionariesAfterProcessStart() {
+        val filesDir = temporaryFolder.newFolder("ready-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = RecordingDictionaryNativeBridge()
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "First", "First")
+        writeDictionary(storage.typeDirectory(DictionaryType.Frequency), "Freq", "Freq")
+        writeDictionary(storage.typeDirectory(DictionaryType.Pitch), "Pitch", "Pitch")
+        storage.saveConfigFromStorage()
+
+        repository.ensureLookupQueryReady()
+        repository.ensureLookupQueryReady()
+
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Term/First").absolutePath), bridge.termPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Frequency/Freq").absolutePath), bridge.freqPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Pitch/Pitch").absolutePath), bridge.pitchPaths.toList())
+        assertEquals(1, bridge.rebuildCount)
+    }
+
+    @Test
+    fun repositoryMoveRewritesIosOrderThroughStorage() {
+        val filesDir = temporaryFolder.newFolder("move-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(RecordingDictionaryNativeBridge()),
+            DictionaryLookupQueryService(RecordingDictionaryNativeBridge()),
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "First", "First")
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "Second", "Second")
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "Third", "Third")
+        val initialOrder = repository.loadDictionaries(DictionaryType.Term).map { it.path.name }
+        val expectedOrder = initialOrder.toMutableList().also { names ->
+            val moved = names.removeAt(2)
+            names.add(0, moved)
+        }
+
+        repository.moveDictionary(DictionaryType.Term, fromIndex = 2, toIndex = 0)
+
+        assertEquals(expectedOrder, repository.loadDictionaries(DictionaryType.Term).map { it.path.name })
+        assertEquals(listOf(0, 1, 2), repository.loadDictionaries(DictionaryType.Term).map { it.order })
+    }
+
+    @Test
+    fun updateDictionariesDownloadsNewRevisionAndPreservesOrderAndEnabledState() {
+        val filesDir = temporaryFolder.newFolder("update-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = ImportingDictionaryNativeBridge()
+        val installedIndex = updatableTestDictionaryIndex()
+        val remoteIndex = installedIndex.copy(
+            title = "JMdict [2099-01-01]",
+            revision = "JMdict.2099-01-01",
+            downloadUrl = "https://example.invalid/JMdict_english.zip",
+        )
+        val remote = FakeDictionaryRemoteDataSource(
+            indexes = mapOf(installedIndex.indexUrl to remoteIndex),
+            archives = mapOf(remoteIndex.downloadUrl to dictionaryArchive(remoteIndex)),
+        )
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+            remote,
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "First", "First")
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), installedIndex.title, installedIndex)
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), "Third", "Third")
+        storage.saveConfig(
+            DictionaryConfig(
+                termDictionaries = listOf(
+                    DictionaryConfig.DictionaryEntry("First", isEnabled = true, order = 0),
+                    DictionaryConfig.DictionaryEntry(
+                        installedIndex.title,
+                        isEnabled = true,
+                        order = 1,
+                        category = DictionaryCategory.Monolingual,
+                    ),
+                    DictionaryConfig.DictionaryEntry("Third", isEnabled = true, order = 2),
+                ),
+                frequencyDictionaries = emptyList(),
+                pitchDictionaries = emptyList(),
+            ),
+        )
+        repository.setDictionaryEnabled(DictionaryType.Term, installedIndex.title, enabled = false)
+
+        val progress = mutableListOf<String>()
+        val summary = repository.updateDictionaries(lowRamImport = true) { update ->
+            progress += "${update.stage}:${update.title}"
+        }
+
+        assertEquals(1, summary.updatedCount)
+        assertEquals(1, summary.successfulCount)
+        assertEquals(emptyList<DictionaryUpdateFailure>(), summary.failures)
+        assertEquals(
+            listOf(
+                "Checking:${installedIndex.title}",
+                "Downloading:${remoteIndex.title}",
+                "Importing:${remoteIndex.title}",
+            ),
+            progress,
+        )
+        assertEquals(listOf(remoteIndex.downloadUrl), remote.downloadedUrls)
+        assertEquals(listOf(true), bridge.lowRamModes)
+        assertFalse(storage.typeDirectory(DictionaryType.Term).resolve(installedIndex.title).exists())
+        val updated = repository.loadDictionaries(DictionaryType.Term)
+        assertEquals(listOf("First", remoteIndex.title, "Third"), updated.map { it.index.title })
+        assertEquals(listOf(true, false, true), updated.map { it.isEnabled })
+        assertEquals(listOf(0, 1, 2), updated.map { it.order })
+        assertEquals(DictionaryCategory.Monolingual, updated[1].category)
+        assertEquals(
+            listOf(
+                filesDir.resolve("Dictionaries/Term/First").absolutePath,
+                filesDir.resolve("Dictionaries/Term/Third").absolutePath,
+            ),
+            bridge.termPaths.toList(),
+        )
+    }
+
+    @Test
+    fun updateDictionariesPreservesEachProfileEnabledStateWhenDictionaryIsRenamed() = kotlinx.coroutines.runBlocking {
+        val filesDir = temporaryFolder.newFolder("profile-update-files")
+        val profileRepository = ProfileRepository(filesDir)
+        val storage = DictionaryStorageDataSource(filesDir, profileRepository = profileRepository)
+        val bridge = ImportingDictionaryNativeBridge()
+        val installedIndex = updatableTestDictionaryIndex()
+        val remoteIndex = installedIndex.copy(
+            title = "JMdict [2099-01-01]",
+            revision = "JMdict.2099-01-01",
+            downloadUrl = "https://example.invalid/JMdict_english.zip",
+        )
+        val remote = FakeDictionaryRemoteDataSource(
+            indexes = mapOf(installedIndex.indexUrl to remoteIndex),
+            archives = mapOf(remoteIndex.downloadUrl to dictionaryArchive(remoteIndex)),
+        )
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+            remote,
+            profileRepository,
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), installedIndex.title, installedIndex)
+        storage.saveConfigFromStorage()
+        repository.setDictionaryCategory(installedIndex.title, DictionaryCategory.Bilingual)
+        val disabledProfile = profileRepository.createProfile(
+            name = "Second",
+            dictionaryLanguageId = ContentLanguageProfile.JapaneseLanguageId,
+        )
+        profileRepository.activateGlobal(disabledProfile.id)
+        repository.setDictionaryEnabled(DictionaryType.Term, installedIndex.title, enabled = false)
+        repository.setDictionaryCategory(installedIndex.title, DictionaryCategory.Exclude)
+        profileRepository.activateGlobal(ProfileRepository.DefaultProfileId)
+
+        val summary = repository.updateDictionaries()
+
+        assertEquals(1, summary.updatedCount)
+        assertEquals(listOf(remoteIndex.title), repository.loadDictionaries(DictionaryType.Term).map { it.index.title })
+        assertEquals(listOf(true), repository.loadDictionaries(DictionaryType.Term).map { it.isEnabled })
+        assertEquals(listOf(DictionaryCategory.Bilingual), repository.loadDictionaries(DictionaryType.Term).map { it.category })
+
+        profileRepository.activateGlobal(disabledProfile.id)
+        val disabledProfileDictionaries = repository.loadDictionaries(DictionaryType.Term)
+        assertEquals(listOf(remoteIndex.title), disabledProfileDictionaries.map { it.index.title })
+        assertEquals(listOf(false), disabledProfileDictionaries.map { it.isEnabled })
+        assertEquals(listOf(DictionaryCategory.Exclude), disabledProfileDictionaries.map { it.category })
+    }
+
+    @Test
+    fun updateDictionariesSkipsDownloadWhenRemoteRevisionMatchesInstalledRevision() {
+        val filesDir = temporaryFolder.newFolder("same-revision-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val installedIndex = updatableTestDictionaryIndex()
+        val remote = FakeDictionaryRemoteDataSource(
+            indexes = mapOf(installedIndex.indexUrl to installedIndex),
+            archives = emptyMap(),
+        )
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(ImportingDictionaryNativeBridge()),
+            DictionaryLookupQueryService(RecordingDictionaryNativeBridge()),
+            remote,
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), installedIndex.title, installedIndex)
+
+        val summary = repository.updateDictionaries()
+
+        assertEquals(0, summary.updatedCount)
+        assertEquals(1, summary.successfulCount)
+        assertEquals(emptyList<DictionaryUpdateFailure>(), summary.failures)
+        assertEquals(emptyList<String>(), remote.downloadedUrls)
+        assertEquals(listOf(installedIndex.title), repository.loadDictionaries(DictionaryType.Term).map { it.index.title })
+    }
+
+    @Test
+    fun updateDictionariesKeepsGoingAfterOneDictionaryFails() {
+        val filesDir = temporaryFolder.newFolder("partial-update-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = ImportingDictionaryNativeBridge()
+        val installedSuccess = updatableTestDictionaryIndex()
+        val remoteSuccess = installedSuccess.copy(
+            title = "JMdict [2099-01-01]",
+            revision = "JMdict.2099-01-01",
+            downloadUrl = "https://example.invalid/JMdict_english_2099.zip",
+        )
+        val installedFailure = DictionaryIndex(
+            title = "Jiten",
+            format = 3,
+            revision = "Jiten.2026-01-01",
+            isUpdatable = true,
+            indexUrl = "https://example.invalid/jiten.json",
+            downloadUrl = "https://example.invalid/jiten.zip",
+        )
+        val remote = FakeDictionaryRemoteDataSource(
+            indexes = mapOf(installedSuccess.indexUrl to remoteSuccess),
+            archives = mapOf(remoteSuccess.downloadUrl to dictionaryArchive(remoteSuccess)),
+            failedIndexUrls = setOf(installedFailure.indexUrl),
+        )
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+            remote,
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), installedSuccess.title, installedSuccess)
+        writeDictionary(storage.typeDirectory(DictionaryType.Frequency), installedFailure.title, installedFailure)
+        storage.saveConfigFromStorage()
+
+        val summary = repository.updateDictionaries()
+
+        assertEquals(2, summary.checkedCount)
+        assertEquals(1, summary.successfulCount)
+        assertEquals(1, summary.updatedCount)
+        assertEquals(listOf("Jiten: fetch failed"), summary.failures.map { "${it.title}: ${it.message}" })
+        assertEquals(listOf(remoteSuccess.title), repository.loadDictionaries(DictionaryType.Term).map { it.index.title })
+        assertEquals(listOf(installedFailure.title), repository.loadDictionaries(DictionaryType.Frequency).map { it.index.title })
+    }
+
+    @Test
+    fun updateDictionariesReportsAllFailuresWithoutRebuildingLookup() {
+        val filesDir = temporaryFolder.newFolder("failed-update-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = ImportingDictionaryNativeBridge()
+        val installedFailure = updatableTestDictionaryIndex()
+        val remote = FakeDictionaryRemoteDataSource(
+            indexes = emptyMap(),
+            archives = emptyMap(),
+            failedIndexUrls = setOf(installedFailure.indexUrl),
+        )
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+            remote,
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), installedFailure.title, installedFailure)
+        storage.saveConfigFromStorage()
+
+        val summary = repository.updateDictionaries()
+
+        assertEquals(1, summary.checkedCount)
+        assertEquals(0, summary.successfulCount)
+        assertEquals(0, summary.updatedCount)
+        assertEquals(listOf("JMdict [2026-01-01]: fetch failed"), summary.failures.map { "${it.title}: ${it.message}" })
+        assertEquals(listOf(installedFailure.title), repository.loadDictionaries(DictionaryType.Term).map { it.index.title })
+        assertEquals(0, bridge.rebuildCount)
+    }
+
+    @Test
+    fun updateDictionariesRethrowsCancellation() {
+        val filesDir = temporaryFolder.newFolder("cancelled-update-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val installed = updatableTestDictionaryIndex()
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(ImportingDictionaryNativeBridge()),
+            DictionaryLookupQueryService(RecordingDictionaryNativeBridge()),
+            FakeDictionaryRemoteDataSource(
+                indexes = emptyMap(),
+                archives = emptyMap(),
+                cancelledIndexUrls = setOf(installed.indexUrl),
+            ),
+        )
+        writeDictionary(storage.typeDirectory(DictionaryType.Term), installed.title, installed)
+        storage.saveConfigFromStorage()
+
+        assertThrows(CancellationException::class.java) {
+            repository.updateDictionaries()
+        }
+        assertEquals(listOf(installed.title), repository.loadDictionaries(DictionaryType.Term).map { it.index.title })
+    }
+
+    @Test
+    fun importRecommendedDictionariesDownloadsSelectedIndexesByType() {
+        val filesDir = temporaryFolder.newFolder("recommended-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = ImportingDictionaryNativeBridge()
+        val jmdictIndex = DictionaryIndex(
+            title = "JMdict [2099-01-01]",
+            format = 3,
+            revision = "JMdict.2099-01-01",
+            isUpdatable = true,
+            indexUrl = "https://example.invalid/jmdict.json",
+            downloadUrl = "https://example.invalid/jmdict.zip",
+        )
+        val jitenIndex = DictionaryIndex(
+            title = "Jiten",
+            format = 3,
+            revision = "Jiten 99-01-01",
+            isUpdatable = true,
+            indexUrl = "https://example.invalid/jiten.json",
+            downloadUrl = "https://example.invalid/jiten.zip",
+        )
+        val jitendexIndex = DictionaryIndex(
+            title = "Jitendex.org [2026-05-05]",
+            format = 3,
+            revision = "2026.05.05.0",
+            isUpdatable = true,
+            indexUrl = "https://jitendex.org/static/yomitan.json",
+            downloadUrl = "https://example.invalid/jitendex.zip",
+        )
+        val englishIpaIndex = DictionaryIndex(
+            title = "wty-en-en-ipa",
+            format = 3,
+            revision = "2026.06.10",
+            isUpdatable = true,
+            indexUrl = "https://example.invalid/wty-en-en-ipa-index.json",
+            downloadUrl = "https://example.invalid/wty-en-en-ipa.zip",
+        )
+        val leipzigEnglishWebRankIndex = DictionaryIndex(
+            title = "Leipzig English Web (Rank)",
+            format = 3,
+            revision = "2024.08.31",
+            downloadUrl = "https://example.invalid/Leipzig.English.Web.Rank.zip",
+        )
+        val leipzigEnglishWikipediaRankIndex = DictionaryIndex(
+            title = "Leipzig English Wikipedia (Rank)",
+            format = 3,
+            revision = "2024.08.31",
+            downloadUrl = "https://example.invalid/Leipzig.English.Wikipedia.Rank.zip",
+        )
+        val remote = FakeDictionaryRemoteDataSource(
+            indexes = mapOf(
+                jmdictIndex.indexUrl to jmdictIndex,
+                jitenIndex.indexUrl to jitenIndex,
+                jitendexIndex.indexUrl to jitendexIndex,
+                englishIpaIndex.indexUrl to englishIpaIndex,
+            ),
+            archives = mapOf(
+                jmdictIndex.downloadUrl to dictionaryArchive(jmdictIndex),
+                jitenIndex.downloadUrl to dictionaryArchive(jitenIndex),
+                jitendexIndex.downloadUrl to dictionaryArchive(jitendexIndex),
+                englishIpaIndex.downloadUrl to dictionaryArchive(englishIpaIndex),
+                leipzigEnglishWebRankIndex.downloadUrl to dictionaryArchive(leipzigEnglishWebRankIndex),
+                leipzigEnglishWikipediaRankIndex.downloadUrl to dictionaryArchive(leipzigEnglishWikipediaRankIndex),
+            ),
+        )
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+            remote,
+        )
+        val selected = listOf(
+            RecommendedDictionary(
+                id = "jmdict",
+                name = "JMdict",
+                type = DictionaryType.Term,
+                indexUrl = jmdictIndex.indexUrl,
+            ),
+            RecommendedDictionary(
+                id = "jiten",
+                name = "Jiten",
+                type = DictionaryType.Frequency,
+                indexUrl = jitenIndex.indexUrl,
+            ),
+            RecommendedDictionary(
+                id = "jitendex",
+                name = "Jitendex",
+                type = DictionaryType.Term,
+                indexUrl = jitendexIndex.indexUrl,
+            ),
+            RecommendedDictionary(
+                id = "wty-en-en-ipa",
+                name = "wty-en-en-ipa",
+                type = DictionaryType.Pitch,
+                indexUrl = englishIpaIndex.indexUrl,
+                languageId = ContentLanguageProfile.EnglishLanguageId,
+            ),
+            RecommendedDictionary(
+                id = "leipzig-english-web-rank",
+                name = "Leipzig English Web",
+                type = DictionaryType.Frequency,
+                indexUrl = "",
+                downloadUrl = leipzigEnglishWebRankIndex.downloadUrl,
+                languageId = ContentLanguageProfile.EnglishLanguageId,
+            ),
+            RecommendedDictionary(
+                id = "leipzig-english-wikipedia-rank",
+                name = "Leipzig English Wikipedia",
+                type = DictionaryType.Frequency,
+                indexUrl = "",
+                downloadUrl = leipzigEnglishWikipediaRankIndex.downloadUrl,
+                languageId = ContentLanguageProfile.EnglishLanguageId,
+            ),
+        )
+        val progress = mutableListOf<String>()
+
+        repository.importRecommendedDictionaries(selected, lowRamImport = true) { update ->
+            progress += "${update.stage}:${update.title}"
+        }
+
+        assertEquals(
+            listOf(
+                "Fetching:JMdict",
+                "Downloading:${jmdictIndex.title}",
+                "Importing:${jmdictIndex.title}",
+                "Fetching:Jiten",
+                "Downloading:${jitenIndex.title}",
+                "Importing:${jitenIndex.title}",
+                "Fetching:Jitendex",
+                "Downloading:${jitendexIndex.title}",
+                "Importing:${jitendexIndex.title}",
+                "Fetching:wty-en-en-ipa",
+                "Downloading:${englishIpaIndex.title}",
+                "Importing:${englishIpaIndex.title}",
+                "Downloading:Leipzig English Web",
+                "Importing:Leipzig English Web",
+                "Downloading:Leipzig English Wikipedia",
+                "Importing:Leipzig English Wikipedia",
+            ),
+            progress,
+        )
+        assertEquals(
+            listOf(
+                jmdictIndex.downloadUrl,
+                jitenIndex.downloadUrl,
+                jitendexIndex.downloadUrl,
+                englishIpaIndex.downloadUrl,
+                leipzigEnglishWebRankIndex.downloadUrl,
+                leipzigEnglishWikipediaRankIndex.downloadUrl,
+            ),
+            remote.downloadedUrls,
+        )
+        assertEquals(listOf(true, true, true, true, true, true), bridge.lowRamModes)
+        assertEquals(listOf(jmdictIndex.title, jitendexIndex.title), repository.loadDictionaries(DictionaryType.Term).map { it.index.title })
+        assertEquals(
+            listOf(jitenIndex.title, leipzigEnglishWebRankIndex.title, leipzigEnglishWikipediaRankIndex.title),
+            repository.loadDictionaries(DictionaryType.Frequency).map { it.index.title },
+        )
+        assertEquals(listOf(englishIpaIndex.title), repository.loadDictionaries(DictionaryType.Pitch).map { it.index.title })
+        assertEquals(
+            listOf(
+                filesDir.resolve("Dictionaries/Term/${jmdictIndex.title}").absolutePath,
+                filesDir.resolve("Dictionaries/Term/${jitendexIndex.title}").absolutePath,
+            ),
+            bridge.termPaths.toList(),
+        )
+        assertEquals(
+            listOf(
+                filesDir.resolve("Dictionaries/Frequency/${jitenIndex.title}").absolutePath,
+                filesDir.resolve("Dictionaries/Frequency/${leipzigEnglishWebRankIndex.title}").absolutePath,
+                filesDir.resolve("Dictionaries/Frequency/${leipzigEnglishWikipediaRankIndex.title}").absolutePath,
+            ),
+            bridge.freqPaths.toList(),
+        )
+        assertEquals(
+            listOf(filesDir.resolve("Dictionaries/Pitch/${englishIpaIndex.title}").absolutePath),
+            bridge.pitchPaths.toList(),
+        )
+    }
+
+    @Test
+    fun manualImportUsesNativeResultCountsToCommitEachDictionaryType() {
+        val filesDir = temporaryFolder.newFolder("detected-import-files")
+        val storage = DictionaryStorageDataSource(filesDir)
+        val bridge = ImportingDictionaryNativeBridge(
+            result = NativeDictionaryImportResult(
+                success = true,
+                title = "Mixed",
+                termCount = 10,
+                metaCount = 0,
+                freqCount = 3,
+                pitchCount = 2,
+                kanjiCount = 4,
+                mediaCount = 0,
+            ),
+        )
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+        )
+
+        repository.importDictionary(
+            input = ByteArrayInputStream(dictionaryArchive(DictionaryIndex("Mixed", 3, "rev"))),
+            lowRamImport = true,
+        )
+
+        assertEquals(listOf("Mixed"), repository.loadDictionaries(DictionaryType.Term).map { it.index.title })
+        assertEquals(listOf("Mixed"), repository.loadDictionaries(DictionaryType.Frequency).map { it.index.title })
+        assertEquals(listOf("Mixed"), repository.loadDictionaries(DictionaryType.Pitch).map { it.index.title })
+        assertEquals(listOf("Mixed"), repository.loadDictionaries(DictionaryType.Kanji).map { it.index.title })
+        assertEquals(listOf(true), bridge.lowRamModes)
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Term/Mixed").absolutePath), bridge.termPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Frequency/Mixed").absolutePath), bridge.freqPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Pitch/Mixed").absolutePath), bridge.pitchPaths.toList())
+        assertEquals(listOf(filesDir.resolve("Dictionaries/Kanji/Mixed").absolutePath), bridge.kanjiPaths.toList())
+    }
+
+    @Test
+    fun importingDictionaryEnablesItOnlyForTheActiveProfile() = kotlinx.coroutines.runBlocking {
+        val filesDir = temporaryFolder.newFolder("profile-import-files")
+        val profileRepository = ProfileRepository(filesDir)
+        val storage = DictionaryStorageDataSource(filesDir, profileRepository = profileRepository)
+        val bridge = ImportingDictionaryNativeBridge()
+        val repository = DictionaryRepository(
+            filesDir,
+            storage,
+            DictionaryImportDataSource(bridge),
+            DictionaryLookupQueryService(bridge),
+            profileRepository = profileRepository,
+        )
+        val englishProfile = profileRepository.createProfile(
+            name = "English",
+            dictionaryLanguageId = ContentLanguageProfile.EnglishLanguageId,
+        )
+        profileRepository.activateGlobal(englishProfile.id)
+
+        repository.importDictionary(
+            input = ByteArrayInputStream(dictionaryArchive(DictionaryIndex("English Dictionary", 3, "rev"))),
+        )
+
+        assertEquals(
+            listOf(true),
+            repository.loadDictionaries(DictionaryType.Term).map { it.isEnabled },
+        )
+
+        profileRepository.activateGlobal(ProfileRepository.DefaultProfileId)
+        val japaneseProfileDictionaries = repository.loadDictionaries(DictionaryType.Term)
+        assertEquals(listOf("English Dictionary"), japaneseProfileDictionaries.map { it.index.title })
+        assertEquals(listOf(false), japaneseProfileDictionaries.map { it.isEnabled })
+
+        repository.ensureLookupQueryReady()
+
+        assertEquals(emptyList<String>(), bridge.termPaths.toList())
+    }
+
+    @Test
+    fun recommendedDictionariesKeepJapaneseListAndAddEnglishWtyList() {
+        assertEquals(
+            listOf("jmdict", "jmnedict", "jiten", "jitendex"),
+            recommendedDictionariesForLanguage(ContentLanguageProfile.JapaneseLanguageId).map { it.id },
+        )
+        assertEquals(
+            "https://github.com/yomidevs/jmdict-yomitan/releases/latest/download/JMdict_english_without_proper_names.json",
+            RecommendedDictionaries.first { it.id == "jmdict" }.indexUrl,
+        )
+
+        val englishRecommendations = recommendedDictionariesForLanguage(ContentLanguageProfile.EnglishLanguageId)
+        assertEquals(
+            listOf(
+                "wty-en-en",
+                "wty-en-en-ipa",
+                "wty-simple-simple",
+                "wty-en-ja",
+                "wty-en-ja-gloss",
+                "leipzig-english-web-rank",
+                "leipzig-english-wikipedia-rank",
+            ),
+            englishRecommendations.map { it.id },
+        )
+        assertFalse(englishRecommendations.any { it.id == "wty-en-en-gloss" })
+        assertFalse(englishRecommendations.any { it.id == "wty-en-zh" })
+        assertFalse(englishRecommendations.any { it.id == "wty-en-zh-gloss" })
+
+        val englishById = englishRecommendations.associateBy { it.id }
+        assertEquals(
+            "Wiktionary English-English",
+            englishById.getValue("wty-en-en").name,
+        )
+        assertEquals(
+            "Wiktionary English-English IPA",
+            englishById.getValue("wty-en-en-ipa").name,
+        )
+        assertEquals(
+            "Wiktionary Simple English-Simple English",
+            englishById.getValue("wty-simple-simple").name,
+        )
+        assertEquals(
+            "Wiktionary English-Japanese",
+            englishById.getValue("wty-en-ja").name,
+        )
+        assertEquals(
+            "Wiktionary English-Japanese Glossary",
+            englishById.getValue("wty-en-ja-gloss").name,
+        )
+        assertEquals(
+            "Leipzig English Web",
+            englishById.getValue("leipzig-english-web-rank").name,
+        )
+        assertEquals(
+            "Leipzig English Wikipedia",
+            englishById.getValue("leipzig-english-wikipedia-rank").name,
+        )
+
+        assertEquals(DictionaryType.Term, englishById.getValue("wty-en-en").type)
+        assertEquals(DictionaryType.Pitch, englishById.getValue("wty-en-en-ipa").type)
+        assertEquals(DictionaryType.Term, englishById.getValue("wty-simple-simple").type)
+        assertEquals(DictionaryType.Term, englishById.getValue("wty-en-ja").type)
+        assertEquals(DictionaryType.Term, englishById.getValue("wty-en-ja-gloss").type)
+        assertEquals(DictionaryType.Frequency, englishById.getValue("leipzig-english-web-rank").type)
+        assertEquals(DictionaryType.Frequency, englishById.getValue("leipzig-english-wikipedia-rank").type)
+
+        assertEquals(
+            "https://huggingface.co/datasets/daxida/wty-release/resolve/main/latest/index/wty-en-en-index.json?download=true",
+            englishById.getValue("wty-en-en").indexUrl,
+        )
+        assertEquals(
+            "https://huggingface.co/datasets/daxida/wty-release/resolve/main/latest/index/wty-en-en-ipa-index.json?download=true",
+            englishById.getValue("wty-en-en-ipa").indexUrl,
+        )
+        assertEquals(
+            "https://huggingface.co/datasets/daxida/wty-release/resolve/main/latest/index/wty-simple-simple-index.json?download=true",
+            englishById.getValue("wty-simple-simple").indexUrl,
+        )
+        assertEquals(
+            "https://huggingface.co/datasets/daxida/wty-release/resolve/main/latest/index/wty-en-ja-index.json?download=true",
+            englishById.getValue("wty-en-ja").indexUrl,
+        )
+        assertEquals(
+            "https://huggingface.co/datasets/daxida/wty-release/resolve/main/latest/index/wty-en-ja-gloss-index.json?download=true",
+            englishById.getValue("wty-en-ja-gloss").indexUrl,
+        )
+        assertEquals(
+            "https://github.com/StefanVukovic99/leipzig-to-yomitan/releases/latest/download/Leipzig.English.Web.Rank.zip",
+            englishById.getValue("leipzig-english-web-rank").downloadUrl,
+        )
+        assertEquals(
+            "https://github.com/StefanVukovic99/leipzig-to-yomitan/releases/latest/download/Leipzig.English.Wikipedia.Rank.zip",
+            englishById.getValue("leipzig-english-wikipedia-rank").downloadUrl,
+        )
+    }
+
+    private fun writeDictionary(typeDirectory: File, fileName: String, title: String) {
+        writeDictionary(
+            typeDirectory = typeDirectory,
+            fileName = fileName,
+            index = DictionaryIndex(title = title, format = 3, revision = "rev"),
+        )
+    }
+
+    private fun writeDictionary(typeDirectory: File, fileName: String, index: DictionaryIndex) {
+        val dictionaryDir = typeDirectory.resolve(fileName)
+        dictionaryDir.mkdirs()
+        dictionaryDir.resolve("index.json").writeText(dictionaryIndexJson(index))
+    }
+
+    private fun updatableTestDictionaryIndex(): DictionaryIndex =
+        DictionaryIndex(
+            title = "JMdict [2026-01-01]",
+            format = 3,
+            revision = "JMdict.2026-01-01",
+            isUpdatable = true,
+            indexUrl = "https://example.invalid/JMdict_english.json",
+            downloadUrl = "https://example.invalid/JMdict_english.zip",
+        )
+
+    private fun dictionaryArchive(index: DictionaryIndex): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(ZipEntry("index.json"))
+            zip.write(dictionaryIndexJson(index).toByteArray())
+            zip.closeEntry()
+        }
+        return output.toByteArray()
+    }
+
+    private fun dictionaryIndexJson(index: DictionaryIndex): String =
+        kotlinx.serialization.json.Json.encodeToString(DictionaryIndex.serializer(), index)
+
+    private class FakeDictionaryRemoteDataSource(
+        private val indexes: Map<String, DictionaryIndex>,
+        private val archives: Map<String, ByteArray>,
+        private val failedIndexUrls: Set<String> = emptySet(),
+        private val failedArchiveUrls: Set<String> = emptySet(),
+        private val cancelledIndexUrls: Set<String> = emptySet(),
+    ) : DictionaryRemoteDataSource {
+        val downloadedUrls = mutableListOf<String>()
+
+        override fun fetchIndex(url: String): DictionaryIndex {
+            if (url in cancelledIndexUrls) throw CancellationException("cancelled")
+            if (url in failedIndexUrls) error("fetch failed")
+            return indexes.getValue(url)
+        }
+
+        override fun downloadArchive(url: String): InputStream {
+            if (url in failedArchiveUrls) error("download failed")
+            downloadedUrls += url
+            return ByteArrayInputStream(archives.getValue(url))
+        }
+    }
+
+    private class ImportingDictionaryNativeBridge(
+        private val result: NativeDictionaryImportResult = NativeDictionaryImportResult(
+            success = true,
+            title = "",
+            termCount = 1,
+            metaCount = 0,
+            freqCount = 0,
+            pitchCount = 0,
+            mediaCount = 0,
+        ),
+    ) : RecordingDictionaryNativeBridge() {
+        override fun importDictionary(zipPath: String, outputDir: String, lowRam: Boolean): NativeDictionaryImportResult {
+            lowRamModes += lowRam
+            val index = ZipFile(File(zipPath)).use { zip ->
+                val entry = zip.getEntry("index.json")
+                val json = zip.getInputStream(entry).use { it.readBytes().decodeToString() }
+                kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString<DictionaryIndex>(json)
+            }
+            File(outputDir, "${index.title}/index.json").also { file ->
+                file.parentFile!!.mkdirs()
+                file.writeText(kotlinx.serialization.json.Json.encodeToString(DictionaryIndex.serializer(), index))
+            }
+            return result.copy(title = result.title.ifBlank { index.title })
+        }
+    }
+
+    private open class RecordingDictionaryNativeBridge : DictionaryNativeBridge {
+        var termPaths: Array<String> = emptyArray()
+            private set
+        var freqPaths: Array<String> = emptyArray()
+            private set
+        var pitchPaths: Array<String> = emptyArray()
+            private set
+        var kanjiPaths: Array<String> = emptyArray()
+            private set
+        val lowRamModes = mutableListOf<Boolean>()
+        var rebuildCount = 0
+            private set
+        var failNextRebuild = false
+
+        override fun importDictionary(zipPath: String, outputDir: String, lowRam: Boolean): NativeDictionaryImportResult {
+            lowRamModes += lowRam
+            return NativeDictionaryImportResult(
+                success = true,
+                title = "",
+                termCount = 1,
+                metaCount = 0,
+                freqCount = 0,
+                pitchCount = 0,
+                mediaCount = 0,
+            )
+        }
+
+        override fun rebuildQuery(
+            session: Long,
+            termPaths: Array<String>,
+            freqPaths: Array<String>,
+            pitchPaths: Array<String>,
+            kanjiPaths: Array<String>,
+        ) {
+            rebuildCount += 1
+            if (failNextRebuild) {
+                failNextRebuild = false
+                error("Unable to rebuild query.")
+            }
+            this.termPaths = termPaths
+            this.freqPaths = freqPaths
+            this.pitchPaths = pitchPaths
+            this.kanjiPaths = kanjiPaths
+        }
+    }
+}

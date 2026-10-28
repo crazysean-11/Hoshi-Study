@@ -1,0 +1,83 @@
+package moe.antimony.hoshi.dictionary
+
+import de.manhhao.hoshi.DictionaryStyle
+import de.manhhao.hoshi.LookupOptions
+import de.manhhao.hoshi.LookupResult
+import de.manhhao.hoshi.KanjiResult
+import java.io.File
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.concurrent.read
+import kotlin.concurrent.write
+import moe.antimony.hoshi.content.ContentLanguageProfile
+
+@Singleton
+internal class DictionaryLookupQueryService @Inject constructor(
+    private val nativeBridge: DictionaryNativeBridge,
+) {
+    private val rebuildLock = Any()
+    private val queryLock = ReentrantReadWriteLock()
+    private var currentSession: Long? = null
+
+    fun rebuild(
+        termDictionaries: List<File>,
+        frequencyDictionaries: List<File>,
+        pitchDictionaries: List<File>,
+        kanjiDictionaries: List<File> = emptyList(),
+        dictionaryLanguageId: String = ContentLanguageProfile.Default.dictionaryLanguageId,
+    ) {
+        synchronized(rebuildLock) {
+            val nextSession = nativeBridge.createLookupObject(dictionaryLanguageId)
+            var committed = false
+            try {
+                nativeBridge.rebuildQuery(
+                    session = nextSession,
+                    termPaths = termDictionaries.toAbsolutePathArray(),
+                    freqPaths = frequencyDictionaries.toAbsolutePathArray(),
+                    pitchPaths = pitchDictionaries.toAbsolutePathArray(),
+                    kanjiPaths = kanjiDictionaries.toAbsolutePathArray(),
+                )
+                val previousSession = queryLock.write {
+                    val previous = currentSession
+                    currentSession = nextSession
+                    committed = true
+                    previous
+                }
+                previousSession?.let(nativeBridge::destroyLookupObject)
+            } finally {
+                if (!committed) {
+                    nativeBridge.destroyLookupObject(nextSession)
+                }
+            }
+        }
+    }
+
+    fun lookup(text: String, maxResults: Int = 16, scanLength: Int = 16, options: LookupOptions = LookupOptions()): List<LookupResult> =
+        queryLock.read {
+            currentSession?.let { session ->
+                nativeBridge.lookup(session, text, maxResults, scanLength, options)
+            } ?: emptyList()
+        }
+
+    fun queryKanji(kanji: String): KanjiResult =
+        queryLock.read {
+            currentSession?.let { session -> nativeBridge.queryKanji(session, kanji) }
+                ?: KanjiResult(kanji, emptyArray())
+        }
+
+    fun getStyles(): List<DictionaryStyle> =
+        queryLock.read {
+            currentSession?.let(nativeBridge::getStyles) ?: emptyList()
+        }
+
+    fun getMediaFile(dictionary: String, path: String): ByteArray? =
+        queryLock.read {
+            currentSession?.let { session ->
+                nativeBridge.getMediaFile(session, dictionary, path)
+            }
+        }
+
+    private fun List<File>.toAbsolutePathArray(): Array<String> =
+        map { it.absolutePath }.toTypedArray()
+}

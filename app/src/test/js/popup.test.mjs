@@ -1,0 +1,1783 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import test from 'node:test';
+import vm from 'node:vm';
+
+const popupSourceUrl = new URL('../../main/assets/hoshi-web/popup/popup.js', import.meta.url);
+const japaneseLanguageUrl = new URL('../../main/assets/hoshi-web/shared/language-ja.js', import.meta.url);
+const japaneseSelectionUrl = new URL('../../main/assets/hoshi-web/shared/selection-ja.js', import.meta.url);
+const sharedSelectionUrl = new URL('../../main/assets/hoshi-web/shared/selection.js', import.meta.url);
+
+class FakeContainer {
+    constructor() {
+        this.listeners = new Map();
+        this.clickAttached = false;
+    }
+
+    addEventListener(type, listener) {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+
+    dispatch(type, event) {
+        (this.listeners.get(type) ?? []).forEach((listener) => listener(event));
+    }
+}
+
+class FakeElement {
+    constructor(matches = [], tagName = 'div') {
+        this.attributes = new Map();
+        this.children = [];
+        this.className = '';
+        this.classList = {
+            contains: (name) => this.className.split(' ').includes(name),
+            add: (...names) => {
+                this.className = [...new Set([...this.className.split(' ').filter(Boolean), ...names])].join(' ');
+            },
+            toggle: (name, enabled) => {
+                const names = new Set(this.className.split(' ').filter(Boolean));
+                if (enabled) names.add(name); else names.delete(name);
+                this.className = [...names].join(' ');
+            },
+        };
+        this.childProbeWidth = undefined;
+        this.dataset = {};
+        this.disabled = false;
+        this.matches = new Set(matches);
+        this.nodeType = 1;
+        this.isConnected = true;
+        this.parentElement = null;
+        this.probeWidth = 100;
+        this.textContent = '';
+        this.style = {
+            properties: new Map(),
+            setProperty(name, value) {
+                this.properties.set(name, value);
+            },
+        };
+        this.tagName = tagName.toUpperCase();
+    }
+
+    setAttribute(name, value) {
+        const stringValue = String(value);
+        this.attributes.set(name, stringValue);
+        if (name.startsWith('data-')) {
+            const dataKey = name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+            this.dataset[dataKey] = stringValue;
+        }
+    }
+
+    getAttribute(name) {
+        return this.attributes.get(name) ?? null;
+    }
+
+    appendChild(child) {
+        child.parentElement = this;
+        if (this.childProbeWidth !== undefined) {
+            child.probeWidth = this.childProbeWidth;
+        }
+        this.children.push(child);
+        return child;
+    }
+
+    append(...children) {
+        children.forEach((child) => this.appendChild(child));
+    }
+
+    replaceChildren(...children) {
+        this.children = [];
+        this.append(...children);
+    }
+
+    get childNodes() {
+        return this.children;
+    }
+
+    set innerHTML(value) {
+        if (value === '') this.children = [];
+    }
+
+    querySelectorAll() {
+        return [];
+    }
+
+    addEventListener(type, listener) {
+        const listeners = this.listeners?.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners ??= new Map();
+        this.listeners.set(type, listeners);
+    }
+
+    dispatch(type, event = {}) {
+        (this.listeners?.get(type) ?? []).forEach((listener) => listener(event));
+    }
+
+    getBoundingClientRect() {
+        return {
+            x: 0,
+            y: 0,
+            left: 0,
+            top: 0,
+            right: this.probeWidth,
+            bottom: 0,
+            width: this.probeWidth,
+            height: 0,
+        };
+    }
+
+    closest(selector) {
+        const selectors = selector.split(',').map((item) => item.trim());
+        return selectors.some((item) => this.matches.has(item) || item === this.tagName.toLowerCase()) ? this : null;
+    }
+
+    remove() {
+        if (this.parentElement?.children) {
+            this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+        }
+        this.isConnected = false;
+    }
+}
+
+function popupContext({
+    loadJapaneseLanguageAsset = false,
+    loadSelectionAssets = false,
+    htmlZoom = '1',
+    htmlProbeWidth = 100,
+    bodyProbeWidth = 100,
+    duplicateStates = {},
+    kanjiResult = null,
+    getEntry = null,
+    lookupRedirect = () => 0,
+    sourceHistoryRestored = () => {},
+    fetchImpl = async () => ({ json: async () => ({ type: 'audioSourceList', audioSources: [] }) }),
+} = {}) {
+    const documentElement = new FakeElement();
+    documentElement.childProbeWidth = htmlProbeWidth;
+    const body = new FakeContainer();
+    body.children = [];
+    body.appendChild = function(element) {
+        element.parentElement = body;
+        element.probeWidth = bodyProbeWidth;
+        body.children.push(element);
+        return element;
+    };
+    const documentListeners = new Map();
+    const entriesContainer = new FakeElement();
+    const searchTextContainer = new FakeElement();
+    const overlay = new FakeElement();
+    const document = {
+        body,
+        documentElement,
+        addEventListener(type, listener) {
+            const listeners = documentListeners.get(type) ?? [];
+            listeners.push(listener);
+            documentListeners.set(type, listeners);
+        },
+        dispatch(type, event) {
+            (documentListeners.get(type) ?? []).forEach((listener) => listener(event));
+        },
+        createElement(tagName) {
+            return new FakeElement([], tagName);
+        },
+        createTextNode(text) {
+            return { nodeType: 3, textContent: text, parentElement: null };
+        },
+        getElementById(id) {
+            return id === 'entries-container' ? entriesContainer : id === 'search-text' ? searchTextContainer : null;
+        },
+        scrollingElement: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
+        querySelectorAll() {
+            return [];
+        },
+        querySelector(selector) {
+            return selector === '.overlay' ? overlay : null;
+        },
+    };
+    const selectTextCalls = [];
+    const tapOutsideMessages = [];
+    const mineEntryMessages = [];
+    const duplicateCheckMessages = [];
+    const showNotesMessages = [];
+    const playWordAudioMessages = [];
+    const kanjiRedirectMessages = [];
+    const kanjiRedirectCommittedMessages = [];
+    let currentDuplicateStates = duplicateStates;
+    const window = {
+        scrollX: 0,
+        scrollY: 0,
+        scanLength: 24,
+        addEventListener() {},
+        getSelection() { return { toString: () => '' }; },
+        hoshiSelection: {
+            selectText(...args) {
+                selectTextCalls.push(args);
+                return '位置';
+            },
+        },
+    };
+    const context = {
+        console,
+        document,
+        fetch: fetchImpl,
+        setTimeout,
+        clearTimeout,
+        getComputedStyle(target) {
+            return { zoom: target === documentElement ? htmlZoom : '1' };
+        },
+        Node: { TEXT_NODE: 3 },
+        webkit: {
+            messageHandlers: {
+                lookupRedirect: { postMessage: lookupRedirect },
+                sourceHistoryRestored: { postMessage: sourceHistoryRestored },
+                tapOutside: {
+                    postMessage(message) {
+                        tapOutsideMessages.push(message);
+                    },
+                },
+                popupScrolled: {
+                    postMessage() {},
+                },
+                mineEntry: {
+                    postMessage(message) {
+                        mineEntryMessages.push(message);
+                        return true;
+                    },
+                },
+                duplicateCheck: {
+                    postMessage(message) {
+                        duplicateCheckMessages.push(message);
+                        return currentDuplicateStates;
+                    },
+                },
+                showNotes: {
+                    postMessage(message) {
+                        showNotesMessages.push(message);
+                        return true;
+                    },
+                },
+                playWordAudio: {
+                    postMessage(message) {
+                        playWordAudioMessages.push(message);
+                    },
+                },
+                kanjiRedirect: {
+                    postMessage(message) {
+                        kanjiRedirectMessages.push(message);
+                        return typeof kanjiResult === 'function' ? kanjiResult(message) : kanjiResult;
+                    },
+                },
+                kanjiRedirectCommitted: {
+                    postMessage(message) {
+                        kanjiRedirectCommittedMessages.push(message);
+                    },
+                },
+                getEntry: {
+                    postMessage(index) {
+                        return getEntry?.(index) ?? null;
+                    },
+                },
+            },
+        },
+        window,
+        requestAnimationFrame(callback) {
+            callback();
+            return 1;
+        },
+    };
+    window.webkit = context.webkit;
+    if (loadJapaneseLanguageAsset) {
+        vm.runInNewContext(fs.readFileSync(japaneseLanguageUrl, 'utf8'), context);
+    }
+    if (loadSelectionAssets) {
+        vm.runInNewContext(fs.readFileSync(japaneseSelectionUrl, 'utf8'), context);
+        vm.runInNewContext(fs.readFileSync(sharedSelectionUrl, 'utf8'), context);
+    }
+    vm.runInNewContext(fs.readFileSync(popupSourceUrl, 'utf8'), context);
+    return {
+        context,
+        body,
+        document,
+        selectTextCalls,
+        tapOutsideMessages,
+        mineEntryMessages,
+        duplicateCheckMessages,
+        showNotesMessages,
+        playWordAudioMessages,
+        kanjiRedirectMessages,
+        kanjiRedirectCommittedMessages,
+        entriesContainer,
+        searchTextContainer,
+        setDuplicateStates(value) { currentDuplicateStates = value; },
+    };
+}
+
+test('source text renders code points and redirects exact suffix with matched highlight and scroll preservation', async () => {
+    const requests = [];
+    const entry = { expression: '𠮟る', reading: 'しかる', matched: '𠮟る', glossaries: [], frequencies: [], pitches: [] };
+    const setup = popupContext({ htmlZoom: '2', lookupRedirect: (query) => { requests.push(query); return 1; }, getEntry: () => entry });
+    setup.context.window.replacePopupResults(0, [], '前𠮟る 後');
+    const source = setup.searchTextContainer;
+    assert.equal(source.hidden, false);
+    assert.deepEqual(source.children.map(span => span.textContent), ['前', '𠮟', 'る', ' ', '後']);
+    setup.document.scrollingElement.scrollTop = 147;
+    await source.onclick({ target: source.children[1], stopPropagation() {} });
+    await flushAsyncWork();
+    assert.deepEqual(requests, ['𠮟る 後']);
+    assert.deepEqual(source.children.map(span => span.classList.contains('matched')), [false, true, true, false, false]);
+    assert.equal(setup.document.scrollingElement.scrollTop, 147);
+    assert.equal(setup.entriesContainer.children[0].dataset.entryIndex, '0');
+    setup.context.redirect(1);
+    assert.equal(setup.document.scrollingElement.scrollTop, 0);
+});
+
+test('source text touch target bypasses generic selection and outside dismissal', () => {
+    const setup = popupContext();
+    const target = new FakeElement(['#search-text']);
+    assert.equal(setup.context.handlePopupTap(target, 10, 10), false);
+    assert.deepEqual(setup.tapOutsideMessages, []);
+    assert.deepEqual(setup.selectTextCalls, []);
+});
+
+for (const popupScale of [0.8, 1, 2]) test(`source redirect retains visual scroll at scale ${popupScale} while delayed results clamp`, async () => {
+    const entry = { expression: '猫', reading: 'ねこ', matched: '猫', glossaries: [], frequencies: [], pitches: [] };
+    let entryRequests = 0;
+    let finishRenderingEntry;
+    const setup = popupContext({
+        htmlZoom: String(popupScale),
+        lookupRedirect: () => 1,
+        getEntry: () => ++entryRequests === 1 ? entry : new Promise(resolve => { finishRenderingEntry = resolve; }),
+    });
+    const viewportHeight = 600;
+    const sourceHeight = 240;
+    const entries = setup.entriesContainer;
+    const source = setup.searchTextContainer;
+    let top = 0;
+    function clamp(value) {
+        // Model browser scroll bounds from visible source and current/minimum entry height.
+        const minimumHeight = (parseFloat(entries.style.minHeight) || 0) / 100 * viewportHeight * popupScale;
+        const entriesHeight = Math.max(entries.children.length ? 900 : 0, minimumHeight);
+        const contentHeight = (source.hidden ? 0 : sourceHeight) + entriesHeight;
+        return Math.max(0, Math.min(value, contentHeight - viewportHeight));
+    }
+    Object.defineProperty(setup.document.scrollingElement, 'scrollTop', {
+        get: () => top = clamp(top),
+        set: value => { top = clamp(value); },
+    });
+    Object.defineProperty(entries, 'innerHTML', {
+        set(value) {
+            if (value === '') entries.children = [];
+            top = clamp(top);
+        },
+    });
+
+    setup.context.window.replacePopupResults(0, [], '猫後');
+    entries.appendChild(new FakeElement());
+    setup.document.scrollingElement.scrollTop = 180;
+    await source.onclick({ target: source.children[0], stopPropagation() {} });
+    assert.equal(entryRequests, 2);
+    assert.equal(entries.children.length, 0);
+    assert.equal(setup.document.scrollingElement.scrollTop, 180);
+
+    finishRenderingEntry(entry);
+    await flushAsyncWork();
+    assert.equal(entries.children[0].dataset.entryIndex, '0');
+    assert.equal(setup.document.scrollingElement.scrollTop, 180);
+
+    setup.context.window.replacePopupResults(0, []);
+    setup.document.scrollingElement.scrollTop = 180;
+    assert.equal(setup.document.scrollingElement.scrollTop, 0);
+    assert.equal(entries.style.minHeight, '');
+});
+
+for (const [text, firstIndex, secondIndex, offsets] of [
+    ['猫と猫', 0, 2, [0, 2]],
+    ['𠮟猫と猫', 1, 3, [2, 4]],
+]) test(`source history restores repeated-word highlights and UTF-16 mining offsets for ${text}`, async () => {
+    const entry = { expression: '猫', reading: 'ねこ', matched: '猫', glossaries: [], frequencies: [], pitches: [] };
+    const restored = [];
+    const setup = popupContext({ lookupRedirect: () => 1, getEntry: () => entry, sourceHistoryRestored: offset => restored.push(offset) });
+    setup.context.window.replacePopupResults(0, [], text);
+    const source = setup.searchTextContainer;
+    const highlighted = () => source.children.flatMap((span, index) => span.classList.contains('matched') ? [index] : []);
+    await source.onclick({ target: source.children[firstIndex], stopPropagation() {} });
+    await flushAsyncWork();
+    await source.onclick({ target: source.children[secondIndex], stopPropagation() {} });
+    await flushAsyncWork();
+    assert.deepEqual(highlighted(), [secondIndex]);
+    setup.context.window.navigateBack();
+    assert.deepEqual(highlighted(), [firstIndex]);
+    assert.deepEqual(restored, [offsets[0]]);
+    setup.context.window.navigateForward();
+    assert.deepEqual(highlighted(), [secondIndex]);
+    assert.deepEqual(restored, offsets);
+});
+
+test('ordinary popup history does not emit source restoration messages', () => {
+    const restored = [];
+    const setup = popupContext({ sourceHistoryRestored: offset => restored.push(offset) });
+    setup.context.window.replacePopupResults(0, []);
+    setup.context.redirect(0);
+    setup.context.window.navigateBack();
+    assert.deepEqual(restored, []);
+});
+
+test('source history restores initial mining offset and null after a non-suffix glossary redirect', async () => {
+    const entry = { expression: '猫', reading: 'ねこ', matched: '猫', glossaries: [], frequencies: [], pitches: [] };
+    const restored = [];
+    const setup = popupContext({ lookupRedirect: () => 1, getEntry: () => entry, sourceHistoryRestored: offset => restored.push(offset) });
+    setup.context.window.replacePopupResults(0, [], '猫と猫', 0);
+    const source = setup.searchTextContainer;
+    await source.onclick({ target: source.children[2], stopPropagation() {} });
+    await flushAsyncWork();
+    setup.context.window.navigateBack();
+    assert.deepEqual(restored, [0]);
+    setup.context.window.navigateForward();
+    setup.context.redirect(0);
+    assert.equal(source.children.some(span => span.classList.contains('matched')), false);
+    setup.context.window.navigateBack();
+    setup.context.window.navigateForward();
+    assert.deepEqual(restored, [0, 2, 2, null]);
+    setup.context.redirect(0, 0, '猫');
+    setup.context.redirect(0, 0, '犬');
+    setup.context.window.navigateBack();
+    assert.equal(restored.at(-1), 2);
+});
+
+test('reset or replacement discards pending source redirect replies', async () => {
+    for (const resetAt of ['lookup', 'entry']) {
+        let resolveLookup;
+        let resolveEntry;
+        const setup = popupContext({
+            lookupRedirect: () => new Promise(resolve => { resolveLookup = resolve; }),
+            getEntry: () => new Promise(resolve => { resolveEntry = resolve; }),
+        });
+        setup.context.window.replacePopupResults(0, [], '猫後');
+        const pending = setup.searchTextContainer.onclick({ target: setup.searchTextContainer.children[0], stopPropagation() {} });
+        if (resetAt === 'entry') {
+            resolveLookup(1);
+            await flushAsyncWork();
+        }
+        setup.context.window.resetPopupResults();
+        setup.context.window.replacePopupResults(0, [], '新しい文');
+        if (resetAt === 'lookup') resolveLookup(1);
+        else resolveEntry({ matched: '猫' });
+        await flushAsyncWork();
+        assert.equal(setup.context.window.entryCount, 0);
+        assert.equal(setup.searchTextContainer.children.map(span => span.textContent).join(''), '新しい文');
+        assert.equal(setup.searchTextContainer.children.some(span => span.classList.contains('matched')), false);
+        if (resetAt === 'lookup' && resolveEntry) resolveEntry({ matched: '猫' });
+        await pending;
+    }
+});
+
+test('later source tap invalidates an earlier lookup awaiting redirect', async () => {
+    let resolveFirstLookup;
+    const entry = { expression: '犬', reading: 'いぬ', matched: '犬', glossaries: [], frequencies: [], pitches: [] };
+    const setup = popupContext({
+        lookupRedirect: query => query === '猫犬'
+            ? new Promise(resolve => { resolveFirstLookup = resolve; })
+            : 1,
+        getEntry: () => entry,
+    });
+    setup.context.window.replacePopupResults(0, [], '猫犬');
+    const source = setup.searchTextContainer;
+    const first = source.onclick({ target: source.children[0], stopPropagation() {} });
+    await flushAsyncWork();
+    const second = source.onclick({ target: source.children[1], stopPropagation() {} });
+    await second;
+    assert.deepEqual(source.children.map(span => span.classList.contains('matched')), [false, true]);
+
+    resolveFirstLookup(1);
+    await first;
+    assert.deepEqual(source.children.map(span => span.classList.contains('matched')), [false, true]);
+});
+
+test('later source tap invalidates an earlier lookup awaiting its entry', async () => {
+    let resolveFirstEntry;
+    let entryRequests = 0;
+    const entry = { expression: '犬', reading: 'いぬ', matched: '犬', glossaries: [], frequencies: [], pitches: [] };
+    const setup = popupContext({
+        lookupRedirect: () => 1,
+        getEntry: () => ++entryRequests === 1
+            ? new Promise(resolve => { resolveFirstEntry = resolve; })
+            : entry,
+    });
+    setup.context.window.replacePopupResults(0, [], '猫犬');
+    const source = setup.searchTextContainer;
+    const first = source.onclick({ target: source.children[0], stopPropagation() {} });
+    await flushAsyncWork();
+    const second = source.onclick({ target: source.children[1], stopPropagation() {} });
+    await second;
+    assert.deepEqual(source.children.map(span => span.classList.contains('matched')), [false, true]);
+
+    resolveFirstEntry(entry);
+    await first;
+    assert.deepEqual(source.children.map(span => span.classList.contains('matched')), [false, true]);
+});
+
+test('glossary redirect invalidates a source lookup awaiting its entry', async () => {
+    let resolveSourceEntry;
+    let entryRequests = 0;
+    const entry = { expression: '犬', reading: 'いぬ', matched: '犬', glossaries: [], frequencies: [], pitches: [] };
+    const setup = popupContext({
+        lookupRedirect: () => 1,
+        getEntry: () => ++entryRequests === 1
+            ? new Promise(resolve => { resolveSourceEntry = resolve; })
+            : entry,
+    });
+    setup.context.window.replacePopupResults(0, [], '猫犬');
+    const source = setup.searchTextContainer;
+    const pending = source.onclick({ target: source.children[0], stopPropagation() {} });
+    await flushAsyncWork();
+
+    setup.context.redirect(3, 0, '犬');
+    resolveSourceEntry(entry);
+    await pending;
+
+    assert.equal(setup.context.window.entryCount, 3);
+    assert.equal(source.children.some(span => span.classList.contains('matched')), false);
+});
+
+test('Kanji redirect invalidates a source lookup awaiting redirect', async () => {
+    let resolveLookup;
+    const entry = { expression: '猫', reading: 'ねこ', matched: '猫', glossaries: [], frequencies: [], pitches: [] };
+    const setup = popupContext({
+        lookupRedirect: () => new Promise(resolve => { resolveLookup = resolve; }),
+        getEntry: () => entry,
+    });
+    setup.context.window.replacePopupResults(0, [], '猫犬');
+    const pending = setup.searchTextContainer.onclick({
+        target: setup.searchTextContainer.children[0],
+        stopPropagation() {},
+    });
+    await flushAsyncWork();
+
+    setup.context.redirectKanji({ character: '犬', entries: [] });
+    resolveLookup(1);
+    await pending;
+
+    assert.equal(setup.entriesContainer.children[0].classList.contains('kanji-entry'), true);
+});
+
+test('source zero-result lookup preserves results highlight and scroll; replacement and reset clear source', async () => {
+    let count = 1;
+    let calls = 0;
+    const entry = { expression: '猫', reading: 'ねこ', matched: '猫', glossaries: [], frequencies: [], pitches: [] };
+    const setup = popupContext({ lookupRedirect: () => { calls++; return count; }, getEntry: () => entry });
+    setup.context.window.replacePopupResults(0, [], '猫後');
+    setup.context.window.replacePopupResults(0, [], '猫後');
+    const source = setup.searchTextContainer;
+    assert.equal(source.children.length, 2);
+    await source.onclick({ target: source.children[0], stopPropagation() {} });
+    await flushAsyncWork();
+    const rendered = setup.entriesContainer.children.slice();
+    count = 0;
+    setup.document.scrollingElement.scrollTop = 89;
+    await source.onclick({ target: source.children[1], stopPropagation() {} });
+    assert.equal(calls, 2);
+    assert.deepEqual(setup.entriesContainer.children, rendered);
+    assert.deepEqual(source.children.map(span => span.classList.contains('matched')), [true, false]);
+    assert.equal(setup.document.scrollingElement.scrollTop, 89);
+    setup.context.window.replacePopupResults(0, []);
+    assert.equal(source.hidden, true);
+    assert.equal(source.children.length, 0);
+    setup.context.window.replacePopupResults(0, [], '猫');
+    setup.context.window.resetPopupResults();
+    assert.equal(source.hidden, true);
+    assert.equal(source.children.length, 0);
+});
+
+async function flushAsyncWork(turns = 8) {
+    for (let turn = 0; turn < turns; turn++) {
+        await Promise.resolve();
+    }
+}
+
+function touchEvent(target, x, y, cancelable = false) {
+    return {
+        target,
+        touches: [{ clientX: x, clientY: y }],
+        changedTouches: [{ clientX: x, clientY: y }],
+        cancelable,
+        defaultPrevented: false,
+        preventDefault() {
+            this.defaultPrevented = true;
+        },
+    };
+}
+
+function clickEvent(target, x, y) {
+    return {
+        target,
+        clientX: x,
+        clientY: y,
+        defaultPrevented: false,
+        preventDefault() {
+            this.defaultPrevented = true;
+        },
+    };
+}
+
+function descendants(element) {
+    const out = [];
+    for (const child of element.children ?? []) {
+        out.push(child);
+        out.push(...descendants(child));
+    }
+    return out;
+}
+
+test('popup touch tap selects text even when WebView suppresses the follow-up click', () => {
+    const { context, selectTextCalls, tapOutsideMessages } = popupContext();
+    const container = new FakeContainer();
+    const target = new FakeElement(['.glossary-content']);
+
+    context.installPopupTapHandlers(container);
+    container.dispatch('touchstart', touchEvent(target, 48, 148));
+    const end = touchEvent(target, 48, 148, true);
+    container.dispatch('touchend', end);
+
+    assert.equal(selectTextCalls.length, 1);
+    assert.deepEqual(selectTextCalls[0], [48, 148, 24, 48, 148]);
+    assert.equal(tapOutsideMessages.length, 0);
+    assert.equal(end.defaultPrevented, true);
+});
+
+test('popup tap coordinates ignore user body zoom when popup scale is active', () => {
+    const { context, selectTextCalls } = popupContext({
+        htmlZoom: '0.95',
+        htmlProbeWidth: 95,
+        bodyProbeWidth: 104.5,
+    });
+    const container = new FakeContainer();
+    const target = new FakeElement(['.glossary-content']);
+
+    context.installPopupTapHandlers(container);
+    container.dispatch('click', clickEvent(target, 45.35555648803711, 233.93334197998047));
+
+    assert.equal(selectTextCalls.length, 1);
+    assert.deepEqual(
+        selectTextCalls[0],
+        [45.35555648803711, 233.93334197998047, 24, 45.35555648803711, 233.93334197998047],
+    );
+});
+
+test('popup geometry keeps scaled visual positions in the scroll coordinate space', () => {
+    const { context, document } = popupContext({ htmlZoom: '1.5' });
+    document.scrollingElement = { scrollTop: 615 };
+    context.window.scrollX = 10;
+    context.window.scrollY = 20;
+    const entry = new FakeElement();
+    entry.offsetTop = 615;
+    entry.getBoundingClientRect = () => ({ top: 307 });
+    const scrollCalls = [];
+    entry.scrollIntoView = (options) => scrollCalls.push(options);
+
+    assert.equal(context.window.hoshiPopupGeometry.elementDocumentTop(entry), 922);
+    context.window.hoshiPopupGeometry.scrollElementToTop(entry);
+    assert.equal(scrollCalls.length, 1);
+    assert.equal(scrollCalls[0].block, 'start');
+    assert.equal(scrollCalls[0].inline, 'nearest');
+    assert.equal(scrollCalls[0].behavior, 'instant');
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(context.window.hoshiPopupGeometry.bridgeSelectionRect({
+            x: 100,
+            y: 200,
+            width: 40,
+            height: 20,
+        }))),
+        { x: 155, y: 310, width: 60, height: 30 },
+    );
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(context.window.hoshiPopupGeometry.visualViewportPointToLayout(300, 150))),
+        { x: 200, y: 100 },
+    );
+});
+
+test('popup touch tap suppresses the duplicate click generated for the same tap', () => {
+    const { context, selectTextCalls } = popupContext();
+    const container = new FakeContainer();
+    const target = new FakeElement(['.glossary-content']);
+
+    context.installPopupTapHandlers(container);
+    container.dispatch('touchstart', touchEvent(target, 48, 148));
+    container.dispatch('touchend', touchEvent(target, 48, 148, true));
+    const duplicateClick = clickEvent(target, 49, 149);
+    container.dispatch('click', duplicateClick);
+
+    assert.equal(selectTextCalls.length, 1);
+    assert.equal(duplicateClick.defaultPrevented, true);
+});
+
+test('popup touch tap lets interactive controls keep their click behavior', () => {
+    const { context, selectTextCalls, tapOutsideMessages } = popupContext();
+    const container = new FakeContainer();
+    const target = new FakeElement(['summary']);
+
+    context.installPopupTapHandlers(container);
+    container.dispatch('touchstart', touchEvent(target, 48, 148));
+    const end = touchEvent(target, 48, 148, true);
+    container.dispatch('touchend', end);
+    const click = clickEvent(target, 48, 148);
+    container.dispatch('click', click);
+
+    assert.equal(selectTextCalls.length, 0);
+    assert.equal(tapOutsideMessages.length, 0);
+    assert.equal(end.defaultPrevented, false);
+    assert.equal(click.defaultPrevented, false);
+});
+
+test('popup click still selects text when there was no touch fallback', () => {
+    const { context, selectTextCalls } = popupContext();
+    const container = new FakeContainer();
+    const target = new FakeElement(['.glossary-content']);
+
+    context.installPopupTapHandlers(container);
+    container.dispatch('click', clickEvent(target, 48, 148));
+
+    assert.equal(selectTextCalls.length, 1);
+});
+
+test('popup content blank area click posts tapOutside through the document handler', () => {
+    const { document, tapOutsideMessages } = popupContext();
+    const target = new FakeElement();
+
+    document.dispatch('click', clickEvent(target, 48, 480));
+
+    assert.deepEqual(tapOutsideMessages, [null]);
+});
+
+test('popup viewport blank area click posts tapOutside when it misses body content', () => {
+    const { document, tapOutsideMessages } = popupContext();
+
+    document.dispatch('click', clickEvent(document.documentElement, 48, 640));
+
+    assert.deepEqual(tapOutsideMessages, [null]);
+});
+
+test('popup action controls remain DOM buttons even if a legacy native button flag is present', () => {
+    const { context } = popupContext();
+
+    context.window.nativePopupButtons = true;
+    const audioSlot = context.createButtonSlot('audio', 0);
+    const mineSlot = context.createButtonSlot('mine', 1, false);
+    const circleSlot = context.createButtonSlot('mine', 2, true, 'format-circle', 'circle-small');
+
+    assert.equal(audioSlot.tagName, 'BUTTON');
+    assert.equal(audioSlot.type, 'button');
+    assert.equal(audioSlot.getAttribute('aria-label'), 'Play audio');
+    assert.equal(audioSlot.children.length, 1);
+    assert.equal(audioSlot.children[0].className, 'button-slot-icon');
+    assert.equal(mineSlot.tagName, 'BUTTON');
+    assert.equal(mineSlot.disabled, true);
+    assert.equal(circleSlot.dataset.formatId, 'format-circle');
+    assert.match(circleSlot.style.properties.get('--button-icon-url'), /add_circle\.svg/);
+});
+
+test('popup keeps unconfigured format buttons reachable for native setup feedback', () => {
+    const { context } = popupContext();
+    context.window.ankiBackendAvailable = true;
+    context.window.ankiFormats = [
+        { id: 'word', icon: 'square', isValid: true },
+        { id: 'sentence', icon: 'circle-small', isValid: false },
+        { id: 'listening', icon: 'diamond', isValid: true },
+    ];
+    const container = new FakeElement();
+
+    const formats = context.appendAnkiFormatButtons(container, 4);
+    const mineButtons = descendants(container).filter((button) => button.dataset.kind === 'mine');
+
+    assert.equal(formats.length, 3);
+    assert.deepEqual(container.children.map((button) => button.dataset.formatId), ['word', 'sentence', 'listening']);
+    assert.equal(mineButtons[0].disabled, false);
+    assert.equal(mineButtons[1].disabled, false);
+    assert.match(mineButtons[1].style.properties.get('--button-icon-url'), /add_circle\.svg/);
+    assert.match(mineButtons[2].style.properties.get('--button-icon-url'), /diamond\.svg/);
+});
+
+test('popup places Anki formats before audio and keeps each notes action with its format', async () => {
+    const { context } = popupContext({
+        duplicateStates: { word: true, sentence: true },
+    });
+    context.window.audioSources = ['https://example.com/audio'];
+    context.window.ankiBackendAvailable = true;
+    context.window.allowDupes = false;
+    context.window.disableShowNotes = false;
+    context.window.ankiFormats = [
+        { id: 'word', icon: 'square', isValid: true },
+        { id: 'sentence', icon: 'circle', isValid: true },
+    ];
+    context.window.lookupEntries = [{ expression: '猫', reading: '猫' }];
+
+    const header = context.createEntryHeader({ expression: '猫', reading: '猫' }, 0);
+    await Promise.resolve();
+    const buttons = header.children.find((child) => child.className === 'header-buttons');
+
+    assert.deepEqual(
+        buttons.children.map((child) => child.dataset.formatId || child.dataset.kind),
+        ['word', 'sentence', 'audio'],
+    );
+    const [wordActions, sentenceActions, audioButton] = buttons.children;
+    assert.equal(wordActions.className, 'anki-format-actions');
+    assert.deepEqual(wordActions.children.map((child) => child.dataset.kind), ['notes', 'mine']);
+    assert.equal(wordActions.children[0].hidden, false);
+    assert.equal(sentenceActions.className, 'anki-format-actions');
+    assert.deepEqual(sentenceActions.children.map((child) => child.dataset.kind), ['mine', 'notes']);
+    assert.equal(sentenceActions.children[1].dataset.placement, 'above');
+    assert.equal(sentenceActions.children[1].hidden, false);
+    assert.equal(audioButton.dataset.kind, 'audio');
+});
+
+test('audio candidate menu preserves source order, numbers duplicate names, and shares selection with mining', async () => {
+    const requestedTargets = [];
+    const setup = popupContext({
+        fetchImpl: async (requestUrl) => {
+            const target = decodeURIComponent(requestUrl.split('url=')[1]);
+            requestedTargets.push(target);
+            const audioSources = target.startsWith('local://')
+                ? [{ name: 'NHK16 1', url: 'local-exact.opus' }]
+                : [
+                    { name: 'Voice', url: 'remote-a.mp3' },
+                    { name: 'Voice', url: 'remote-b.mp3' },
+                ];
+            return { json: async () => ({ type: 'audioSourceList', audioSources }) };
+        },
+    });
+    const { context, mineEntryMessages, playWordAudioMessages } = setup;
+    context.window.audioSources = [
+        { name: 'Local', url: 'local://?term={term}&reading={reading}' },
+        { name: 'Remote', url: 'remote://?term={term}&reading={reading}' },
+    ];
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', glossaries: [] }];
+
+    const initialMenu = await context.getAudioMenu(0);
+
+    assert.deepEqual([...initialMenu.names], ['Local: NHK16 1', 'Remote: Voice', 'Remote: Voice 2']);
+    assert.equal(initialMenu.selected, -1);
+    assert.deepEqual(requestedTargets, ['local://?term=%E7%8C%AB&reading=%E3%81%AD%E3%81%93', 'remote://?term=%E7%8C%AB&reading=%E3%81%AD%E3%81%93']);
+
+    await context.playEntryAudio(0, 1);
+    assert.equal(playWordAudioMessages.at(-1).url, 'remote-a.mp3');
+    assert.equal((await context.getAudioMenu(0)).selected, 1);
+
+    await context.mineEntry('猫', 'ねこ', [], [], [], '猫', 0, '', 'format-a');
+    assert.equal(mineEntryMessages.at(-1).payload.audio, 'remote-a.mp3');
+    assert.equal(requestedTargets.length, 2);
+});
+
+test('audio candidate loading continues after an enabled source fails', async () => {
+    const requestedTargets = [];
+    const { context } = popupContext({
+        fetchImpl: async (requestUrl) => {
+            const target = decodeURIComponent(requestUrl.split('url=')[1]);
+            requestedTargets.push(target);
+            if (target.startsWith('broken://')) {
+                throw new Error('source unavailable');
+            }
+            return {
+                json: async () => ({
+                    type: 'audioSourceList',
+                    audioSources: [{ name: 'Voice', url: 'working.mp3' }],
+                }),
+            };
+        },
+    });
+    context.window.audioSources = [
+        { name: 'Broken', url: 'broken://?term={term}&reading={reading}' },
+        { name: 'Working', url: 'working://?term={term}&reading={reading}' },
+    ];
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+
+    const menu = await context.getAudioMenu(0);
+
+    assert.deepEqual([...menu.names], ['Working: Voice']);
+    assert.deepEqual(requestedTargets, [
+        'broken://?term=%E7%8C%AB&reading=%E3%81%AD%E3%81%93',
+        'working://?term=%E7%8C%AB&reading=%E3%81%AD%E3%81%93',
+    ]);
+});
+
+test('audio candidate cache is cleared when popup results reset', async () => {
+    let requestCount = 0;
+    const { context } = popupContext({
+        fetchImpl: async () => ({
+            json: async () => ({
+                type: 'audioSourceList',
+                audioSources: [{ name: 'Voice', url: `audio-${++requestCount}.mp3` }],
+            }),
+        }),
+    });
+    context.window.audioSources = [{ name: 'Remote', url: 'remote://?term={term}&reading={reading}' }];
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+
+    assert.deepEqual([...(await context.getAudioMenu(0)).names], ['Remote: Voice']);
+    assert.equal(requestCount, 1);
+
+    context.window.resetPopupResults();
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+    assert.deepEqual([...(await context.getAudioMenu(0)).names], ['Remote: Voice']);
+    assert.equal(requestCount, 2);
+});
+
+test('pending audio selection cannot leak across popup reset', async () => {
+    let requestCount = 0;
+    let resolveFirstRequest;
+    const { context, playWordAudioMessages } = popupContext({
+        fetchImpl: async () => {
+            requestCount += 1;
+            if (requestCount === 1) {
+                return await new Promise((resolve) => {
+                    resolveFirstRequest = () => resolve({
+                        json: async () => ({
+                            type: 'audioSourceList',
+                            audioSources: [{ name: 'Old', url: 'old.mp3' }],
+                        }),
+                    });
+                });
+            }
+            return {
+                json: async () => ({
+                    type: 'audioSourceList',
+                    audioSources: [{ name: 'New', url: 'new.mp3' }],
+                }),
+            };
+        },
+    });
+    context.window.audioSources = [{ name: 'Remote', url: 'remote://?term={term}&reading={reading}' }];
+    context.window.lookupEntries = [{ expression: '旧', reading: 'きゅう' }];
+
+    const pendingPlayback = context.playEntryAudio(0);
+    context.window.resetPopupResults();
+    context.window.lookupEntries = [{ expression: '新', reading: 'しん' }];
+    resolveFirstRequest();
+    await pendingPlayback;
+
+    assert.deepEqual(playWordAudioMessages, []);
+    await context.playEntryAudio(0);
+    assert.equal(playWordAudioMessages.at(-1).url, 'new.mp3');
+});
+
+test('long pressing audio opens the candidate menu without also playing the default', async () => {
+    const setup = popupContext({
+        fetchImpl: async () => ({
+            json: async () => ({ type: 'audioSourceList', audioSources: [{ name: 'Voice', url: 'voice.mp3' }] }),
+        }),
+    });
+    const { body, context, playWordAudioMessages } = setup;
+    context.window.audioSources = [{ name: 'Remote', url: 'remote://?term={term}&reading={reading}' }];
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+    const audioSlot = context.createButtonSlot('audio', 0);
+    const event = {
+        clientX: 12,
+        clientY: 16,
+        preventDefault() {},
+        stopPropagation() {},
+    };
+
+    audioSlot.dispatch('pointerdown', event);
+    await new Promise((resolve) => setTimeout(resolve, 425));
+    await flushAsyncWork();
+    audioSlot.dispatch('pointerup', event);
+    audioSlot.dispatch('click', event);
+
+    assert.equal(body.children.some((child) => child.className === 'audio-candidate-menu'), true);
+    assert.deepEqual(playWordAudioMessages, []);
+});
+
+test('audio candidate menu renders localized disabled empty state', async () => {
+    const { body, context } = popupContext();
+    context.window.audioSources = [{ name: 'Remote', url: 'remote://?term={term}&reading={reading}' }];
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+    context.window.noAudioFoundText = '未找到音频';
+    const anchor = new FakeElement();
+
+    await context.showAudioCandidateMenu(0, anchor);
+
+    const menu = body.children.find((child) => child.className === 'audio-candidate-menu');
+    assert.equal(menu.children.length, 1);
+    assert.equal(menu.children[0].textContent, '未找到音频');
+    assert.equal(menu.children[0].disabled, true);
+});
+
+test('duplicate refresh updates every format and creates or removes show-notes buttons', async () => {
+    const setup = popupContext({
+        duplicateStates: { word: true, sentence: false, listening: true },
+    });
+    const { context } = setup;
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', matched: '猫' }];
+    context.window.ankiBackendAvailable = true;
+    context.window.allowDupes = false;
+    context.window.disableShowNotes = false;
+    context.window.ankiFormats = [
+        { id: 'word', icon: 'square', isValid: true },
+        { id: 'sentence', icon: 'circle', isValid: true },
+        { id: 'listening', icon: 'diamond', isValid: true },
+    ];
+    const container = new FakeElement();
+    context.appendAnkiFormatButtons(container, 0);
+    const notesButtons = descendants(container).filter((button) => button.dataset.kind === 'notes');
+
+    assert.deepEqual(notesButtons.map((button) => button.style.display), ['none', 'none', 'none']);
+
+    await context.refreshAnkiDuplicateStates(0, container);
+
+    const mineButtons = descendants(container).filter((button) => button.dataset.kind === 'mine');
+    assert.deepEqual(mineButtons.map((button) => button.dataset.state), ['duplicate', 'default', 'duplicate']);
+    assert.deepEqual(mineButtons.map((button) => button.disabled), [true, false, true]);
+    assert.equal(descendants(container).filter((button) => button.dataset.kind === 'notes' && !button.hidden).length, 2);
+    assert.deepEqual(notesButtons.map((button) => button.style.display), ['', 'none', '']);
+    assert.match(mineButtons[2].style.properties.get('--button-icon-url'), /diamond_fill\.svg/);
+
+    setup.setDuplicateStates({ word: false, sentence: false, listening: false });
+    await context.refreshAnkiDuplicateStates(0, container);
+    assert.equal(descendants(container).filter((button) => button.dataset.kind === 'notes' && !button.hidden).length, 0);
+    assert.deepEqual(notesButtons.map((button) => button.style.display), ['none', 'none', 'none']);
+    assert.deepEqual(mineButtons.map((button) => button.disabled), [false, false, false]);
+});
+
+test('popup language detection works with split selection policy assets', () => {
+    const { context } = popupContext({
+        loadJapaneseLanguageAsset: true,
+        loadSelectionAssets: true,
+    });
+
+    assert.doesNotThrow(() => context.getLanguageFromText('plain English glossary', 'en'));
+    assert.equal(context.getLanguageFromText('plain English glossary', 'en'), 'en');
+    assert.equal(context.getLanguageFromText('猫 glossary', 'en'), 'ja');
+});
+
+test('popup language detection does not depend on the selection object', () => {
+    const { context } = popupContext({ loadJapaneseLanguageAsset: true });
+    delete context.window.hoshiSelection;
+
+    assert.equal(context.getLanguageFromText('猫 glossary', 'en'), 'ja');
+});
+
+test('popup renders each deinflection trace candidate as its own tag row', () => {
+    const { context } = popupContext();
+
+    const tags = context.createTags({
+        expression: '食べる',
+        reading: 'たべる',
+        deinflectionTraceRows: [
+            [
+                { name: 'polite', description: 'Polite form' },
+                { name: 'past', description: 'Past tense' },
+            ],
+            [
+                { name: 'redirect', description: 'Dictionary redirect' },
+            ],
+        ],
+        frequencies: [],
+        pitches: [],
+    });
+
+    assert.ok(tags);
+    const rows = tags.children.filter((node) => String(node.className).split(' ').includes('tag-row'));
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows[0].children.map((node) => node.textContent), ['polite', 'past']);
+    assert.deepEqual(rows[1].children.map((node) => node.textContent), ['redirect']);
+});
+
+test('popup transcription entries do not render as Japanese pitch accents', () => {
+    const { context } = popupContext();
+
+    const tags = context.createTags({
+        expression: 'read',
+        reading: 'read',
+        deinflectionTraceRows: [],
+        frequencies: [],
+        pitches: [
+            {
+                dictionary: 'English',
+                pitches: [],
+                transcriptions: ['/riːd/', '/rɛd/'],
+            },
+        ],
+    });
+    const nodes = descendants(tags);
+
+    assert.ok(tags);
+    assert.equal(nodes.some((node) => String(node.className).split(' ').includes('transcription-list')), true);
+    assert.equal(nodes.some((node) => String(node.className).split(' ').includes('pitch-group')), false);
+    assert.equal(nodes.some((node) => node.textContent === '/riːd/'), true);
+});
+
+test('popup preserves IPA dictionary transcription delimiters', () => {
+    const { context } = popupContext();
+
+    const tags = context.createTags({
+        expression: 'read',
+        reading: 'read',
+        deinflectionTraceRows: [],
+        frequencies: [],
+        pitches: [
+            {
+                dictionary: 'seth-oald-ipa',
+                pitches: [],
+                transcriptions: ['/riːd/'],
+            },
+        ],
+    });
+    const nodes = descendants(tags);
+
+    assert.equal(nodes.some((node) => node.textContent === '/riːd/'), true);
+    assert.equal(nodes.some((node) => node.textContent === '//riːd//'), false);
+});
+
+function popupTermNavigator(entryCount = 3) {
+    const { context, document } = popupContext();
+    const entries = [];
+    const scrollTargets = [];
+    let scrollTop = 0;
+    const navigator = context.window.createPopupTermNavigator({
+        entryCount: () => entryCount,
+        entries: () => entries,
+        scrollTop: () => scrollTop,
+        scrollTo: (entry) => {
+            scrollTop = entry.top;
+            scrollTargets.push(entry.top);
+        },
+    });
+    return {
+        entries,
+        context,
+        document,
+        navigator,
+        scrollTargets,
+        setScrollTop(value) { scrollTop = value; },
+    };
+}
+
+test('popup term navigation moves between rendered entry headers without wrapping', () => {
+    const setup = popupTermNavigator();
+    setup.entries.push(
+        { index: 0, top: 0 },
+        { index: 1, top: 120 },
+        { index: 2, top: 300 },
+    );
+
+    setup.navigator.navigate('next');
+    setup.navigator.navigate('next');
+    setup.navigator.navigate('next');
+    setup.navigator.navigate('previous');
+
+    assert.deepEqual(setup.scrollTargets, [120, 300, 120]);
+});
+
+test('popup previous term first returns to the current entry header after manual scrolling', () => {
+    const setup = popupTermNavigator();
+    setup.entries.push(
+        { index: 0, top: 0 },
+        { index: 1, top: 120 },
+        { index: 2, top: 300 },
+    );
+    setup.setScrollTop(180);
+
+    setup.navigator.navigate('previous');
+    setup.navigator.navigate('previous');
+
+    assert.deepEqual(setup.scrollTargets, [120, 0]);
+});
+
+test('popup term navigation queues repeated moves until the target entry renders', () => {
+    const setup = popupTermNavigator();
+    setup.entries.push({ index: 0, top: 0 });
+
+    setup.navigator.navigate('next');
+    setup.navigator.navigate('next');
+    setup.entries.push({ index: 1, top: 120 });
+    setup.navigator.entryRendered();
+    setup.entries.push({ index: 2, top: 300 });
+    setup.navigator.entryRendered();
+
+    assert.deepEqual(setup.scrollTargets, [300]);
+});
+
+test('a delayed programmatic scroll does not cancel a newer pending term move', () => {
+    const setup = popupTermNavigator();
+    setup.entries.push(
+        { index: 0, top: 0 },
+        { index: 1, top: 120 },
+    );
+    setup.context.window.installPopupTermNavigationInput(setup.navigator, setup.document);
+
+    setup.navigator.navigate('next');
+    setup.navigator.navigate('next');
+    setup.document.dispatch('scroll', {});
+    setup.entries.push({ index: 2, top: 300 });
+    setup.navigator.entryRendered();
+
+    assert.deepEqual(setup.scrollTargets, [120, 300]);
+});
+
+test('manual scrolling and reset cancel pending popup term navigation', () => {
+    const setup = popupTermNavigator();
+    setup.entries.push({ index: 0, top: 0 });
+    setup.context.window.installPopupTermNavigationInput(setup.navigator, setup.document);
+
+    setup.navigator.navigate('next');
+    setup.document.dispatch('pointerdown', {});
+    setup.entries.push({ index: 1, top: 120 });
+    setup.navigator.entryRendered();
+    setup.setScrollTop(120);
+    setup.navigator.navigate('next');
+    setup.navigator.reset();
+    setup.entries.push({ index: 2, top: 300 });
+    setup.navigator.entryRendered();
+
+    assert.deepEqual(setup.scrollTargets, []);
+});
+
+test('popup builds Yomitan-compatible phonetic transcriptions Anki HTML', () => {
+    const { context } = popupContext();
+
+    const html = context.constructPhoneticTranscriptionsHtml([
+        {
+            dictionary: 'seth-oald-ipa',
+            pitches: [],
+            transcriptions: ['/riːd/', '/rɛd/'],
+        },
+    ]);
+
+    assert.equal(
+        html,
+        '<ul><li class="pronunciation" data-pronunciation-type="phonetic-transcription">/riːd/</li><li class="pronunciation" data-pronunciation-type="phonetic-transcription">/rɛd/</li></ul>',
+    );
+});
+
+test('mineEntry posts phonetic transcriptions for Anki handlebar rendering', async () => {
+    const { context, mineEntryMessages } = popupContext();
+    context.window.lookupEntries = [{ glossaries: [] }];
+
+    await context.mineEntry(
+        'read',
+        'read',
+        [],
+        [{ dictionary: 'seth-oald-ipa', pitches: [], transcriptions: ['/riːd/'] }],
+        [],
+        'read',
+        0,
+        'read',
+        'format-a',
+    );
+
+    assert.equal(mineEntryMessages.length, 1);
+    assert.equal(mineEntryMessages[0].formatId, 'format-a');
+    assert.equal(
+        mineEntryMessages[0].payload.phoneticTranscriptions,
+        '<ul><li class="pronunciation" data-pronunciation-type="phonetic-transcription">/riːd/</li></ul>',
+    );
+});
+
+test('show-notes and duplicate payloads use stable format ids and handlebar values', async () => {
+    const { context, showNotesMessages } = popupContext();
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', matched: '猫' }];
+
+    const values = context.duplicateValuesForEntry(context.window.lookupEntries[0]);
+    const shown = await context.showNotesAtIndex(0, 'format-cat');
+
+    assert.equal(values['{expression}'], '猫');
+    assert.equal(values['{reading}'], 'ねこ');
+    assert.equal(context.duplicateStateForFormat({ 'format-cat': true }, 'format-cat'), true);
+    assert.equal(context.duplicateStateForFormat({}, 'deleted-format'), null);
+    assert.equal(shown, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(showNotesMessages[0])), {
+        formatId: 'format-cat',
+        values: JSON.parse(JSON.stringify(values)),
+    });
+});
+
+test('pitch graph handlebars receive deduplicated SVGs and first graph selection', () => {
+    const { context } = popupContext();
+    context.window.deduplicatePitchAccents = true;
+    const pitches = [
+        { dictionary: 'A', pitches: [{ position: 0 }, { position: 2 }] },
+        { dictionary: 'B', pitches: [{ position: 2 }, { position: 1 }] },
+    ];
+
+    const all = context.constructPitchAccentGraphsHtml(pitches, 'ねこ');
+    const first = context.constructPitchAccentGraphsHtml(pitches, 'ねこ', true);
+
+    assert.equal((all.match(/<svg/g) || []).length, 3);
+    assert.equal((first.match(/<svg/g) || []).length, 1);
+    assert.match(first, /data-downstep="0"/);
+    assert.match(all, /stroke-dasharray:5 5/);
+});
+
+test('pitch graph output keeps duplicates when disabled and omits list for one graph', () => {
+    const { context } = popupContext();
+    context.window.deduplicatePitchAccents = false;
+
+    const multiple = context.constructPitchAccentGraphsHtml([
+        { pitches: [{ position: 1 }] },
+        { pitches: [{ position: 1 }] },
+    ], 'ねこ');
+    const single = context.constructPitchAccentGraphsHtml([{ pitches: [{ position: 1 }] }], 'ねこ');
+
+    assert.equal((multiple.match(/<svg/g) || []).length, 2);
+    assert.match(multiple, /^<ol>/);
+    assert.match(single, /^<svg/);
+    assert.doesNotMatch(single, /<ol>/);
+});
+
+test('complete pitch renders string patterns with 1-based nasal and devoice mora markers', () => {
+    const { context } = popupContext();
+    const group = context.createPitchGroup({
+        dictionary: 'Accent',
+        pitches: [{ position: 'LHL', nasal: [1], devoice: [2] }],
+    }, 'ねこ');
+    const morae = descendants(group).filter((node) => node.className === 'pronunciation-mora');
+
+    assert.equal(morae.length, 2);
+    assert.equal(morae[0].dataset.pitch, 'low');
+    assert.equal(morae[0].dataset.nasal, 'true');
+    assert.equal(morae[1].dataset.pitch, 'high');
+    assert.equal(morae[1].dataset.devoice, 'true');
+    assert.match(context.constructPitchPositionHtml([{ pitches: [{ position: 'LHL' }] }]), />2</);
+});
+
+test('nasal pitch renders the base kana for voiced and semi-voiced morae', () => {
+    const { context } = popupContext();
+    const cases = [
+        { reading: 'かぎ', nasalPosition: 2, expected: 'き' },
+        { reading: 'ぱく', nasalPosition: 1, expected: 'は' },
+    ];
+
+    for (const { reading, nasalPosition, expected } of cases) {
+        const group = context.createPitchGroup({
+            dictionary: 'NHK+',
+            pitches: [{ position: 'LHL', nasal: [nasalPosition], devoice: [] }],
+        }, reading);
+        const nasalMora = descendants(group)
+            .filter((node) => node.className === 'pronunciation-mora')
+            .find((node) => node.dataset.nasal === 'true');
+        const characterGroup = descendants(nasalMora)
+            .find((node) => node.className === 'pronunciation-character-group');
+
+        assert.equal(characterGroup.children[0].textContent, expected);
+    }
+});
+
+test('nasal pitch keeps the small kana tail outside the marked character group', () => {
+    const { context } = popupContext();
+    const group = context.createPitchGroup({
+        dictionary: 'NHK+',
+        pitches: [{ position: 'HLL', nasal: [1], devoice: [] }],
+    }, 'ぎゃく');
+    const nasalMora = descendants(group)
+        .filter((node) => node.className === 'pronunciation-mora')
+        .find((node) => node.dataset.nasal === 'true');
+    const characterGroup = descendants(nasalMora)
+        .find((node) => node.className === 'pronunciation-character-group');
+
+    assert.equal(characterGroup.children[0].textContent, 'き');
+    assert.equal(nasalMora.children[1].textContent, 'ゃ');
+});
+
+test('kanji touch redirect renders in place and suppresses its duplicate click', async () => {
+    const result = {
+        character: '星',
+        entries: [{ dictName: 'KANJIDIC', onyomi: 'セイ', kunyomi: 'ほし', meanings: ['star'] }],
+    };
+    const setup = popupContext({ kanjiResult: result });
+    const container = new FakeContainer();
+    const target = new FakeElement(['.kanji-char']);
+    target.textContent = '星';
+    setup.context.installPopupTapHandlers(container);
+
+    container.dispatch('touchstart', touchEvent(target, 20, 30));
+    container.dispatch('touchend', touchEvent(target, 20, 30, true));
+    const duplicateClick = clickEvent(target, 20, 30);
+    container.dispatch('click', duplicateClick);
+    await Promise.resolve();
+
+    assert.deepEqual(setup.kanjiRedirectMessages, ['星']);
+    assert.equal(setup.kanjiRedirectCommittedMessages.length, 1);
+    assert.equal(duplicateClick.defaultPrevented, true);
+    assert.equal(setup.selectTextCalls.length, 0);
+    assert.equal(setup.entriesContainer.children[0].className, 'entry kanji-entry');
+
+    setup.context.window.navigateBack();
+    assert.equal(setup.entriesContainer.children.length, 0);
+    setup.context.window.navigateForward();
+    assert.equal(setup.entriesContainer.children[0].className, 'entry kanji-entry');
+});
+
+test('kanji history resumes entries that were still loading when redirect started', async () => {
+    let resolveSecondEntry;
+    const secondEntry = new Promise((resolve) => { resolveSecondEntry = resolve; });
+    const entries = [
+        { expression: '星空', reading: 'ほしぞら', glossaries: [] },
+        { expression: '星', reading: 'ほし', glossaries: [] },
+    ];
+    const setup = popupContext({
+        kanjiResult: {
+            character: '星',
+            entries: [{ dictName: 'KANJIDIC', onyomi: 'セイ', kunyomi: 'ほし', meanings: ['star'] }],
+        },
+        getEntry(index) {
+            return index === 0 ? entries[0] : secondEntry;
+        },
+    });
+    setup.context.window.entryCount = entries.length;
+    setup.context.window.renderPopup();
+    await flushAsyncWork();
+    assert.equal(setup.entriesContainer.children.filter((node) => node.dataset?.entryIndex !== undefined).length, 1);
+
+    const target = new FakeElement(['.kanji-char']);
+    target.textContent = '星';
+    setup.context.handlePopupTap(target, 10, 10);
+    await flushAsyncWork();
+    setup.context.window.navigateBack();
+    resolveSecondEntry(entries[1]);
+    await flushAsyncWork(16);
+
+    assert.equal(setup.entriesContainer.children.filter((node) => node.dataset?.entryIndex !== undefined).length, 2);
+});
+
+test('term redirect history never resumes old DOM from the replacement host result set', async () => {
+    let resolveOldSecondEntry;
+    const oldSecondEntry = new Promise((resolve) => { resolveOldSecondEntry = resolve; });
+    const oldEntries = [
+        { expression: '古い一', reading: '', glossaries: [] },
+        { expression: '古い二', reading: '', glossaries: [] },
+    ];
+    const newEntries = [
+        { expression: '新しい一', reading: '', glossaries: [] },
+        { expression: '新しい二', reading: '', glossaries: [] },
+    ];
+    let hostEntries = oldEntries;
+    const setup = popupContext({
+        getEntry(index) {
+            if (hostEntries === oldEntries && index === 1) return oldSecondEntry;
+            return hostEntries[index];
+        },
+    });
+    setup.context.window.entryCount = oldEntries.length;
+    setup.context.window.renderPopup();
+    await flushAsyncWork();
+    assert.equal(setup.entriesContainer.children.filter((node) => node.dataset?.entryIndex !== undefined).length, 1);
+
+    hostEntries = newEntries;
+    setup.context.redirect(newEntries.length);
+    await flushAsyncWork(16);
+    setup.context.window.navigateBack();
+    await flushAsyncWork(16);
+
+    assert.equal(setup.entriesContainer.children.filter((node) => node.dataset?.entryIndex !== undefined).length, 1);
+    resolveOldSecondEntry(oldEntries[1]);
+    await flushAsyncWork();
+    assert.equal(setup.entriesContainer.children.filter((node) => node.dataset?.entryIndex !== undefined).length, 1);
+});
+
+test('only the latest Kanji response may replace popup state or commit native history', async () => {
+    const resolvers = new Map();
+    const setup = popupContext({
+        kanjiResult(kanji) {
+            return new Promise((resolve) => resolvers.set(kanji, resolve));
+        },
+    });
+    const star = new FakeElement(['.kanji-char']);
+    star.textContent = '星';
+    const sun = new FakeElement(['.kanji-char']);
+    sun.textContent = '日';
+
+    setup.context.handlePopupTap(star, 10, 10);
+    setup.context.handlePopupTap(sun, 10, 10);
+    resolvers.get('日')({
+        character: '日',
+        entries: [{ dictName: 'KANJIDIC', onyomi: 'ニチ', kunyomi: 'ひ', meanings: ['sun'] }],
+    });
+    await flushAsyncWork();
+    resolvers.get('星')({
+        character: '星',
+        entries: [{ dictName: 'KANJIDIC', onyomi: 'セイ', kunyomi: 'ほし', meanings: ['star'] }],
+    });
+    await flushAsyncWork();
+
+    const renderedCharacter = descendants(setup.entriesContainer.children[0])
+        .find((node) => node.className === 'kanji')?.textContent;
+    assert.equal(renderedCharacter, '日');
+    assert.equal(setup.kanjiRedirectCommittedMessages.length, 1);
+
+    const late = new FakeElement(['.kanji-char']);
+    late.textContent = '月';
+    setup.context.handlePopupTap(late, 10, 10);
+    setup.context.window.replacePopupResults(0, []);
+    resolvers.get('月')({
+        character: '月',
+        entries: [{ dictName: 'KANJIDIC', onyomi: 'ゲツ', kunyomi: 'つき', meanings: ['moon'] }],
+    });
+    await flushAsyncWork();
+
+    assert.equal(setup.entriesContainer.children.length, 0);
+    assert.equal(setup.kanjiRedirectCommittedMessages.length, 1);
+});
+
+for (const path of ['images/glyph.svg', 'images/illustration.png']) {
+    test(`AnkiDroid exports dictionary media without an embed setting: ${path}`, () => {
+        const { context } = popupContext();
+        vm.runInNewContext('currentDictionaryMedia = new Map()', context);
+        const node = context.createDefinitionImage({path, width: 24, height: 16, data: {alt: 'Illustration'}}, 'Dictionary', true);
+        const image = node.children[0].children.at(-1);
+        assert.equal(image.tagName, 'IMG');
+        assert.equal(image.src, `hoshi_dict_0.${path.split('.').pop()}`);
+        assert.equal(image.alt, 'Illustration');
+        const media = vm.runInNewContext('Array.from(currentDictionaryMedia.values())', context);
+        assert.equal(media.length, 1);
+        assert.equal(media[0].dictionary, 'Dictionary');
+        assert.equal(media[0].path, path);
+        assert.equal(media[0].filename, image.src);
+    });
+}
+
+test('Yomitan sources skip an empty primary and share the chosen fallback with mining', async () => {
+    const requestedTargets = [];
+    const { context, playWordAudioMessages, mineEntryMessages } = popupContext({
+        fetchImpl: async (requestUrl) => {
+            const target = new URL(decodeURIComponent(requestUrl.split('url=')[1]));
+            requestedTargets.push(target.hostname);
+            const audioSources = target.hostname === 'jpod101' ? [] : [
+                { name: '', url: `https://example.com/${target.hostname}.mp3` },
+            ];
+            return { json: async () => ({ type: 'audioSourceList', audioSources }) };
+        },
+    });
+    context.window.audioSources = [
+        { name: 'JapanesePod101', url: 'hoshi-builtin-audio-source://jpod101/?term={term}&reading={reading}' },
+        { name: 'LanguagePod101', url: 'hoshi-builtin-audio-source://language-pod-101/?term={term}&reading={reading}' },
+        { name: 'Jisho', url: 'hoshi-builtin-audio-source://jisho/?term={term}&reading={reading}' },
+    ];
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', glossaries: [] }];
+    await context.playEntryAudio(0);
+    assert.equal(playWordAudioMessages.at(-1).url, 'https://example.com/language-pod-101.mp3');
+    assert.deepEqual(requestedTargets, ['jpod101', 'language-pod-101']);
+    assert.deepEqual([...(await context.getAudioMenu(0)).names], ['LanguagePod101', 'Jisho']);
+    await context.playEntryAudio(0, 1);
+    await context.mineEntry('猫', 'ねこ', [], [], [], '猫', 0, '', 'format-a');
+    assert.equal(mineEntryMessages.at(-1).payload.audio, 'https://example.com/jisho.mp3');
+    assert.deepEqual(requestedTargets, ['jpod101', 'language-pod-101', 'jisho']);
+});
+
+for (const primary of ['local://audio', 'hoshi-builtin-audio-source://jpod101/']) {
+    for (const action of ['play', 'mine']) {
+        test(`default ${action} stops after ${primary} without requesting later slow sources`, async () => {
+            const requested = [];
+            const { context, playWordAudioMessages, mineEntryMessages } = popupContext({
+                fetchImpl: async (url) => {
+                    const target = decodeURIComponent(url.split('url=')[1]);
+                    requested.push(target);
+                    if (target !== primary) return new Promise(() => {});
+                    return { json: async () => ({ type: 'audioSourceList', audioSources: [{ url: 'first.mp3' }] }) };
+                },
+            });
+            context.window.audioSources = [
+                { name: 'Primary', url: primary },
+                { name: 'LanguagePod101', url: 'hoshi-builtin-audio-source://language-pod-101/' },
+                { name: 'Jisho', url: 'hoshi-builtin-audio-source://jisho/' },
+            ];
+            context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', glossaries: [] }];
+            context.window.needsAudio = true;
+            const pending = action === 'play' ? context.playEntryAudio(0)
+                : context.mineEntry('猫', 'ねこ', [], [], [], '猫', 0, '', 'format-a');
+            await flushAsyncWork();
+            assert.equal(action === 'play' ? playWordAudioMessages.at(-1)?.url : mineEntryMessages.at(-1)?.payload.audio, 'first.mp3');
+            assert.deepEqual(requested, [primary]);
+            await pending;
+        });
+    }
+}
+
+test('default playback reuses local candidates while the full menu waits for a remote source', async () => {
+    const requested = [];
+    let finishRemote;
+    const { context, playWordAudioMessages } = popupContext({
+        fetchImpl: async (url) => {
+            const target = decodeURIComponent(url.split('url=')[1]);
+            requested.push(target);
+            const response = (audioUrl) => ({ json: async () => ({ type: 'audioSourceList', audioSources: [{ url: audioUrl }] }) });
+            if (target.startsWith('local://')) return response('local.opus');
+            return new Promise(resolve => { finishRemote = () => resolve(response('remote.mp3')); });
+        },
+    });
+    context.window.audioSources = [{ name: 'Local', url: 'local://audio' }, { name: 'Remote', url: 'https://remote.example/audio' }];
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+    const menu = context.getAudioMenu(0);
+    await flushAsyncWork();
+    const playback = context.playEntryAudio(0);
+    await flushAsyncWork();
+    assert.equal(playWordAudioMessages.at(-1)?.url, 'local.opus');
+    finishRemote();
+    await playback;
+    assert.deepEqual([...(await menu).names], ['Local', 'Remote']);
+    assert.deepEqual(requested, ['local://audio', 'https://remote.example/audio']);
+});
+
+test('audio menu appears immediately and lets a faster later source play before earlier sources finish', async () => {
+    const responses = new Map();
+    const { context, body, playWordAudioMessages, mineEntryMessages } = popupContext({
+        fetchImpl: (url) => new Promise(resolve => {
+            const target = decodeURIComponent(url.split('url=')[1]);
+            responses.set(target, audioSources => resolve({ json: async () => ({ type: 'audioSourceList', audioSources }) }));
+        }),
+    });
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', glossaries: [] }];
+    context.window.audioSources = [{ name: 'Slow', url: 'slow://' }, { name: 'Fast', url: 'fast://' }];
+    context.window.audioLoadingText = '加载中…';
+    const pending = context.showAudioCandidateMenu(0, new FakeElement());
+    const menu = body.children.find(child => child.className === 'audio-candidate-menu');
+    assert.ok(menu, 'menu must exist before any request finishes');
+    assert.match(menu.children[0].children[0].textContent, /加载中/);
+    assert.equal(responses.size, 2, 'menu sources load concurrently');
+    responses.get('fast://')([{ url: 'fast.mp3' }]);
+    await flushAsyncWork();
+    const fastButton = menu.children[1].children[0];
+    assert.equal(fastButton.textContent, 'Fast');
+    assert.equal(fastButton.disabled, false);
+    fastButton.dispatch('click', { preventDefault() {}, stopPropagation() {} });
+    await flushAsyncWork();
+    assert.equal(playWordAudioMessages.at(-1)?.url, 'fast.mp3');
+    await context.mineEntry('猫', 'ねこ', [], [], [], '猫', 0, '', 'format-a');
+    assert.equal(mineEntryMessages.at(-1)?.payload.audio, 'fast.mp3');
+    responses.get('slow://')([{ url: 'slow.mp3' }]);
+    await pending;
+    assert.equal(body.children.some(child => child.className === 'audio-candidate-menu'), false, 'late results must not reopen a dismissed menu');
+});
+
+test('incremental audio menu preserves source order and existing buttons as other results arrive', async () => {
+    const responses = new Map();
+    const { context, body } = popupContext({
+        fetchImpl: (url) => new Promise(resolve => responses.set(decodeURIComponent(url.split('url=')[1]),
+            audioSources => resolve({ json: async () => ({ type: 'audioSourceList', audioSources }) }))),
+    });
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+    context.window.audioSources = [{ name: 'First', url: 'first://' }, { name: 'Second', url: 'second://' }];
+    const pending = context.showAudioCandidateMenu(0, new FakeElement());
+    assert.equal(responses.size, 2);
+    responses.get('second://')([{ url: 'second.mp3' }]);
+    await flushAsyncWork();
+    const menu = body.children.find(child => child.className === 'audio-candidate-menu');
+    const second = menu.children[1].children[0];
+    responses.get('first://')([{ url: 'first.mp3' }]);
+    await pending;
+    assert.deepEqual(menu.children.map(group => group.children[0].textContent), ['First', 'Second']);
+    assert.equal(menu.children[1].children[0], second, 'do not replace a button the user may be pressing');
+});
+
+test('closing or resetting a loading audio menu prevents late results from changing a new menu', async () => {
+    let finishOld;
+    let count = 0;
+    const { context, body } = popupContext({
+        fetchImpl: async () => {
+            count++;
+            if (count === 1) return new Promise(resolve => { finishOld = () => resolve({ json: async () => ({ type: 'audioSourceList', audioSources: [{ url: 'old.mp3' }] }) }); });
+            return { json: async () => ({ type: 'audioSourceList', audioSources: [] }) };
+        },
+    });
+    context.window.audioSources = [{ name: 'Remote', url: 'remote://' }];
+    context.window.lookupEntries = [{ expression: '旧', reading: 'きゅう' }];
+    const old = context.showAudioCandidateMenu(0, new FakeElement());
+    context.window.resetPopupResults();
+    context.window.lookupEntries = [{ expression: '新', reading: 'しん' }];
+    await context.showAudioCandidateMenu(0, new FakeElement());
+    const current = body.children.find(child => child.className === 'audio-candidate-menu');
+    finishOld();
+    await old;
+    assert.deepEqual(body.children.filter(child => child.className === 'audio-candidate-menu'), [current]);
+    assert.equal(current.children[0].textContent, 'No audio found');
+    assert.equal(current.children[0].disabled, true);
+});
+
+for (const action of ['play', 'mine']) {
+    test(`pending default ${action} preserves a newer explicit menu selection`, async () => {
+        let finishSlow;
+        const { context, body, playWordAudioMessages, mineEntryMessages } = popupContext({
+            fetchImpl: async (url) => {
+                const response = audioUrl => ({ json: async () => ({ type: 'audioSourceList', audioSources: [{ url: audioUrl }] }) });
+                if (decodeURIComponent(url.split('url=')[1]) === 'slow://') return new Promise(resolve => { finishSlow = () => resolve(response('slow.mp3')); });
+                return response('fast.mp3');
+            },
+        });
+        context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', glossaries: [] }];
+        context.window.audioSources = [{ name: 'Slow', url: 'slow://' }, { name: 'Fast', url: 'fast://' }];
+        context.window.needsAudio = true;
+        const pending = action === 'play' ? context.playEntryAudio(0)
+            : context.mineEntry('猫', 'ねこ', [], [], [], '猫', 0, '', 'format-a');
+        const menuTask = context.showAudioCandidateMenu(0, new FakeElement());
+        await flushAsyncWork();
+        const menu = body.children.find(child => child.className === 'audio-candidate-menu');
+        menu.children[1].children[0].dispatch('click', { preventDefault() {}, stopPropagation() {} });
+        finishSlow();
+        await Promise.all([pending, menuTask]);
+        assert.deepEqual(playWordAudioMessages.map(message => message.url), ['fast.mp3']);
+        if (action === 'play') await context.mineEntry('猫', 'ねこ', [], [], [], '猫', 0, '', 'format-a');
+        assert.equal(mineEntryMessages.at(-1).payload.audio, 'fast.mp3');
+    });
+}
+
+test('default mining completion does not cancel concurrent requested playback', async () => {
+    let finish;
+    const { context, playWordAudioMessages, mineEntryMessages } = popupContext({
+        fetchImpl: () => new Promise(resolve => { finish = () => resolve({ json: async () => ({ type: 'audioSourceList', audioSources: [{ url: 'audio.mp3' }] }) }); }),
+    });
+    context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', glossaries: [] }];
+    context.window.audioSources = [{ name: 'Remote', url: 'remote://' }];
+    context.window.needsAudio = true;
+    const mining = context.mineEntry('猫', 'ねこ', [], [], [], '猫', 0, '', 'format-a');
+    const playback = context.playEntryAudio(0);
+    finish();
+    await Promise.all([mining, playback]);
+    assert.equal(mineEntryMessages.at(-1).payload.audio, 'audio.mp3');
+    assert.deepEqual(playWordAudioMessages.map(message => message.url), ['audio.mp3']);
+});
+
+for (const zoom of [0.8, 1, 2]) {
+    for (const side of ['below', 'above']) {
+        test(`long audio menu stays ${side} its anchor in a short viewport at zoom ${zoom}`, async () => {
+            const { context, body, document } = popupContext({ htmlZoom: String(zoom) });
+            context.window.innerWidth = 320 * zoom;
+            context.window.innerHeight = 200 * zoom;
+            const createElement = document.createElement.bind(document);
+            document.createElement = tag => {
+                const element = createElement(tag);
+                Object.defineProperty(element, 'offsetHeight', { get: () => Math.min(600, parseFloat(element.style.maxHeight) || 600) });
+                element.offsetWidth = 220;
+                return element;
+            };
+            const top = side === 'below' ? 20 : 150;
+            const bottom = top + 30;
+            const anchor = new FakeElement();
+            anchor.getBoundingClientRect = () => ({ top: top * zoom, bottom: bottom * zoom, right: 300 * zoom });
+            context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ' }];
+            context.window.audioSources = [{ name: 'Slow', url: 'slow://' }];
+            await context.showAudioCandidateMenu(0, anchor);
+            const menu = body.children.find(child => child.className === 'audio-candidate-menu');
+            const menuTop = parseFloat(menu.style.top);
+            const menuBottom = menuTop + menu.offsetHeight;
+            assert.ok(menuTop >= 8 && menuBottom <= 192, 'menu fits the popup viewport');
+            assert.ok(side === 'below' ? menuTop >= bottom + 4 : menuBottom <= top - 4, 'menu must not cover the trigger');
+            assert.equal(parseFloat(menu.style.maxHeight), 138);
+        });
+    }
+}
+
+
+test('failed Anki adds and bridge failures leave every format available for retry', async () => {
+    for (const throws of [false, true]) {
+        const { context } = popupContext();
+        context.window.lookupEntries = [{ expression: '猫', reading: 'ねこ', matched: '猫' }];
+        context.window.ankiFormats = [
+            { id: 'word', icon: 'square', isValid: false },
+            { id: 'sentence', icon: 'circle', isValid: true },
+        ];
+        context.mineEntry = async () => { if (throws) throw new Error('bridge unavailable'); return false; };
+        const container = new FakeElement();
+        context.appendAnkiFormatButtons(container, 0);
+        await context.mineEntryAtIndex(0, 'word', container);
+        const buttons = descendants(container).filter((button) => button.dataset.kind === 'mine');
+        assert.deepEqual(buttons.map((button) => button.disabled), [false, false]);
+        assert.equal(buttons[0].dataset.state, 'error');
+    }
+});

@@ -1,0 +1,382 @@
+package moe.antimony.hoshi.features.dictionary
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import de.manhhao.hoshi.LookupOptions
+import de.manhhao.hoshi.LookupResult
+import de.manhhao.hoshi.KanjiResult
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import moe.antimony.hoshi.dictionary.DictionaryRepository
+import moe.antimony.hoshi.features.audio.AudioSettings
+import moe.antimony.hoshi.features.anki.AnkiMiningContext
+import moe.antimony.hoshi.features.audio.AudioSettingsRepository
+import moe.antimony.hoshi.features.reader.ReaderSelectionData
+import moe.antimony.hoshi.R
+import moe.antimony.hoshi.di.IoDispatcher
+import moe.antimony.hoshi.ui.UiText
+
+internal interface DictionarySearchRepository {
+    val dictionarySettings: Flow<DictionarySettings>
+    val audioSettings: Flow<AudioSettings>
+    suspend fun rebuildLookupQuery()
+    fun lookup(query: String, maxResults: Int, scanLength: Int, options: LookupOptions): List<LookupResult>
+    fun dictionaryStyles(): Map<String, String>
+    fun lookupKanji(kanji: String): KanjiResult = KanjiResult(kanji, emptyArray())
+}
+
+@Singleton
+internal class AndroidDictionarySearchRepository @Inject constructor(
+    private val dictionaryRepository: DictionaryRepository,
+    dictionarySettingsRepository: DictionarySettingsRepository,
+    audioSettingsRepository: AudioSettingsRepository,
+) : DictionarySearchRepository {
+    override val dictionarySettings: Flow<DictionarySettings> = dictionarySettingsRepository.settings
+    override val audioSettings: Flow<AudioSettings> = audioSettingsRepository.settings
+
+    override suspend fun rebuildLookupQuery() {
+        dictionaryRepository.rebuildLookupQuery()
+    }
+
+    override fun lookup(query: String, maxResults: Int, scanLength: Int, options: LookupOptions): List<LookupResult> =
+        dictionaryRepository.lookup(query, maxResults, scanLength, options)
+
+    override fun dictionaryStyles(): Map<String, String> =
+        dictionaryRepository.dictionaryStyles()
+
+    override fun lookupKanji(kanji: String): KanjiResult =
+        dictionaryRepository.lookupKanji(kanji)
+}
+
+@HiltViewModel
+internal class DictionarySearchViewModel : ViewModel {
+    private val repository: DictionarySearchRepository
+    private val ioDispatcher: CoroutineDispatcher
+    private val injectedScope: CoroutineScope?
+    private val scope: CoroutineScope
+        get() = injectedScope ?: viewModelScope
+
+    @Inject
+    constructor(
+        repository: DictionarySearchRepository,
+        @IoDispatcher ioDispatcher: CoroutineDispatcher,
+    ) : this(
+        repository = repository,
+        coroutineScope = null,
+        ioDispatcher = ioDispatcher,
+        marker = Unit,
+    )
+
+    internal constructor(
+        repository: DictionarySearchRepository,
+        coroutineScope: CoroutineScope,
+        ioDispatcher: CoroutineDispatcher,
+    ) : this(
+        repository = repository,
+        coroutineScope = coroutineScope,
+        ioDispatcher = ioDispatcher,
+        marker = Unit,
+    )
+
+    private constructor(
+        repository: DictionarySearchRepository,
+        coroutineScope: CoroutineScope?,
+        ioDispatcher: CoroutineDispatcher,
+        @Suppress("UNUSED_PARAMETER") marker: Unit,
+    ) : super() {
+        this.repository = repository
+        this.ioDispatcher = ioDispatcher
+        injectedScope = coroutineScope
+        collectInitialState()
+    }
+
+    private val _uiState = MutableStateFlow(DictionarySearchUiState())
+
+    val uiState: StateFlow<DictionarySearchUiState> = _uiState.asStateFlow()
+
+    private var observedEffectiveProfileId: String? = null
+    private var profileChangeVersion: Int = 0
+
+    private fun collectInitialState() {
+        scope.launch {
+            withContext(ioDispatcher) {
+                runCatching { repository.rebuildLookupQuery() }
+            }
+        }
+        scope.launch {
+            repository.dictionarySettings.collect { settings ->
+                _uiState.update { it.copy(dictionarySettings = settings) }
+            }
+        }
+        scope.launch {
+            repository.audioSettings.collect { settings ->
+                _uiState.update { it.copy(audioSettings = settings) }
+            }
+        }
+    }
+
+    fun updateQuery(query: String) {
+        _uiState.update { it.copy(query = query) }
+    }
+
+    fun resetSearch() {
+        _uiState.update { current ->
+            DictionarySearchUiState(
+                dictionarySettings = current.dictionarySettings,
+                audioSettings = current.audioSettings,
+            )
+        }
+    }
+
+    fun applyExternalLookup(query: String) {
+        if (query.isBlank()) {
+            resetSearch()
+        } else {
+            updateQuery(query)
+            runLookup()
+        }
+    }
+
+    fun onEffectiveProfileChanged(profileId: String) {
+        val previousProfileId = observedEffectiveProfileId
+        if (previousProfileId == profileId) return
+        observedEffectiveProfileId = profileId
+        if (previousProfileId == null) return
+
+        profileChangeVersion += 1
+        _uiState.update { current ->
+            current.copy(
+                lastQuery = "",
+                sentenceOffset = null,
+                results = emptyList(),
+                hasSearched = false,
+                isSearching = false,
+                errorMessage = null,
+                dictionaryStyles = emptyMap(),
+                popups = emptyList(),
+                resultClearSelectionSignal = 0,
+                backCount = 0,
+                forwardCount = 0,
+                backSignal = 0,
+                forwardSignal = 0,
+            )
+        }
+        scope.launch {
+            withContext(ioDispatcher) {
+                runCatching { repository.rebuildLookupQuery() }
+            }
+        }
+    }
+
+    fun runLookup() {
+        val query = _uiState.value.query
+        val dictionarySettings = _uiState.value.dictionarySettings.normalized()
+        val lookupProfileVersion = profileChangeVersion
+        scope.launch {
+            _uiState.update { it.copy(isSearching = true, errorMessage = null, sentenceOffset = null) }
+            runCatching {
+                withContext(ioDispatcher) {
+                    val trimmed = query.trim()
+                    if (trimmed.isEmpty()) {
+                        DictionarySearchContent.runLookup(
+                            query = query,
+                            lookup = { error("lookup should not run for blank query") },
+                        )
+                    } else {
+                        repository.rebuildLookupQuery()
+                        val styles = repository.dictionaryStyles()
+                        DictionarySearchContent.runLookup(
+                            query = query,
+                            lookup = { repository.lookup(it, dictionarySettings.maxResults, dictionarySettings.scanLength, dictionarySettings.lookupOptions()) },
+                            dictionaryStyles = styles,
+                        )
+                    }
+                }
+            }.onSuccess { state ->
+                if (lookupProfileVersion == profileChangeVersion) {
+                    _uiState.update {
+                        it.copy(
+                            lastQuery = state.lastQuery,
+                            sentenceOffset = null,
+                            results = state.results,
+                            hasSearched = true,
+                            isSearching = false,
+                            errorMessage = null,
+                            dictionaryStyles = state.dictionaryStyles,
+                            popups = emptyList(),
+                            resultClearSelectionSignal = 0,
+                            backCount = 0,
+                            forwardCount = 0,
+                            backSignal = 0,
+                            forwardSignal = 0,
+                        )
+                    }
+                }
+            }.onFailure { error ->
+                if (lookupProfileVersion == profileChangeVersion) {
+                    _uiState.update {
+                        it.copy(
+                            lastQuery = query.trim(),
+                            sentenceOffset = null,
+                            results = emptyList(),
+                            hasSearched = true,
+                            isSearching = false,
+                            errorMessage = error.localizedMessage?.let(UiText::Literal)
+                                ?: UiText.Resource(R.string.dictionary_lookup_failed),
+                            dictionaryStyles = emptyMap(),
+                            popups = emptyList(),
+                            resultClearSelectionSignal = 0,
+                            backCount = 0,
+                            forwardCount = 0,
+                            backSignal = 0,
+                            forwardSignal = 0,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun lookupRedirect(query: String): List<LookupResult> {
+        val settings = _uiState.value.dictionarySettings.normalized()
+        return repository.lookup(query, settings.maxResults, settings.scanLength, settings.lookupOptions())
+    }
+
+    fun lookupKanji(kanji: String): KanjiResult = repository.lookupKanji(kanji)
+
+    fun restoreRootSourceHistory(sentenceOffset: Int?) {
+        _uiState.update { state ->
+            if (sentenceOffset != null && sentenceOffset !in 0..state.lastQuery.length) {
+                state
+            } else {
+                state.copy(sentenceOffset = sentenceOffset)
+            }
+        }
+    }
+
+    fun rootMiningContext(): AnkiMiningContext = _uiState.value.let {
+        AnkiMiningContext(sentence = it.lastQuery.ifBlank { it.query }, sentenceOffset = it.sentenceOffset)
+    }
+
+    fun entryForPopup(popupId: String, index: Int): LookupResult? {
+        if (index < 0) return null
+        val state = _uiState.value
+        return if (popupId == DictionarySearchRootPopupId) {
+            state.results.getOrNull(index)
+        } else {
+            state.popups.firstOrNull { it.id == popupId }?.state?.results?.getOrNull(index)
+        }
+    }
+
+    fun lookupRootRedirect(query: String): List<LookupResult> {
+        if (query.isBlank()) return emptyList()
+        val settings = _uiState.value.dictionarySettings.normalized()
+        val results = runCatching { repository.lookup(query, settings.maxResults, settings.scanLength, settings.lookupOptions()) }
+            .getOrElse { return emptyList() }
+        if (results.isNotEmpty()) {
+            _uiState.update {
+                it.copy(
+                    sentenceOffset = if (it.lastQuery.endsWith(query)) it.lastQuery.length - query.length else null,
+                    results = results,
+                    hasSearched = true,
+                    isSearching = false,
+                    errorMessage = null,
+                    dictionaryStyles = if (it.dictionaryStyles.isEmpty()) repository.dictionaryStyles() else it.dictionaryStyles,
+                    popups = emptyList(),
+                    backCount = it.backCount + 1,
+                    forwardCount = 0,
+                )
+            }
+        }
+        return results
+    }
+
+    fun recordLookupRedirected(count: Int) {
+        if (count <= 0) return
+        _uiState.update {
+            it.copy(
+                backCount = it.backCount + 1,
+                forwardCount = 0,
+            )
+        }
+    }
+
+    fun navigateBack() {
+        _uiState.update {
+            if (it.backCount <= 0) {
+                it
+            } else {
+                it.copy(
+                    backSignal = it.backSignal + 1,
+                    backCount = it.backCount - 1,
+                    forwardCount = it.forwardCount + 1,
+                )
+            }
+        }
+    }
+
+    fun navigateForward() {
+        _uiState.update {
+            if (it.forwardCount <= 0) {
+                it
+            } else {
+                it.copy(
+                    forwardSignal = it.forwardSignal + 1,
+                    forwardCount = it.forwardCount - 1,
+                    backCount = it.backCount + 1,
+                )
+            }
+        }
+    }
+
+    fun openRootPopup(
+        selection: ReaderSelectionData,
+        options: LookupPopupOptions,
+    ): Int? {
+        val (popup, highlightCount) = createPopup(selection, options) ?: run {
+            closePopups()
+            return null
+        }
+        _uiState.update { it.copy(popups = listOf(popup)) }
+        return highlightCount
+    }
+
+    fun createPopup(
+        selection: ReaderSelectionData,
+        options: LookupPopupOptions,
+    ): Pair<LookupPopupItem, Int>? =
+        createLookupPopupItem(
+            selection = selection,
+            options = options,
+            dictionaryStyles = _uiState.value.dictionaryStyles,
+            lookup = { text, maxResults, scanLength -> repository.lookup(text, maxResults, scanLength, options.dictionarySettings.lookupOptions()) },
+        )
+
+    fun setPopups(popups: List<LookupPopupItem>) {
+        _uiState.update { it.copy(popups = popups) }
+    }
+
+    fun closePopups() {
+        _uiState.update { it.copy(popups = emptyList()) }
+    }
+
+    fun dismissRootPopup() {
+        _uiState.update {
+            it.copy(
+                popups = emptyList(),
+                resultClearSelectionSignal = it.resultClearSelectionSignal + 1,
+            )
+        }
+    }
+
+}

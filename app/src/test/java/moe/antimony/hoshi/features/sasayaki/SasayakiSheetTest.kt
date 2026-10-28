@@ -1,0 +1,242 @@
+package moe.antimony.hoshi.features.sasayaki
+
+import androidx.compose.ui.semantics.Role
+import moe.antimony.hoshi.epub.SasayakiMatch
+import moe.antimony.hoshi.epub.SasayakiMatchData
+import moe.antimony.hoshi.epub.SasayakiPlaybackData
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SasayakiSheetTest {
+    @Test
+    fun playbackSpeedSliderAllowsThreeTimesSpeedWithExistingStepSize() {
+        assertEquals(0.5f, SasayakiSpeedSliderRange.start, 0.0f)
+        assertEquals(3.0f, SasayakiSpeedSliderRange.endInclusive, 0.0f)
+
+        val intervalCount = SasayakiSpeedSliderSteps + 1
+        val stepSize = (SasayakiSpeedSliderRange.endInclusive - SasayakiSpeedSliderRange.start) / intervalCount
+        assertEquals(0.05f, stepSize, 0.0001f)
+    }
+
+    @Test
+    fun defaultTabIsResourcesUntilAudiobookWithChaptersIsAvailable() {
+        assertEquals(
+            SasayakiSheetTab.Resources,
+            sasayakiDefaultSheetTab(hasAudio = false, hasChapters = false),
+        )
+        assertEquals(
+            SasayakiSheetTab.Resources,
+            sasayakiDefaultSheetTab(hasAudio = true, hasChapters = false),
+        )
+        assertEquals(
+            SasayakiSheetTab.Chapters,
+            sasayakiDefaultSheetTab(hasAudio = true, hasChapters = true),
+        )
+    }
+
+    @Test
+    fun playbackHeaderIsHiddenUntilAudiobookIsAvailable() {
+        assertFalse(sasayakiShouldShowPlaybackHeader(hasAudio = false))
+        assertTrue(sasayakiShouldShowPlaybackHeader(hasAudio = true))
+    }
+
+    @Test
+    fun sheetTabsUseTabSelectionSemantics() {
+        assertEquals(Role.Tab, SasayakiSheetTabRole)
+    }
+
+    @Test
+    fun subtitleMatchSummaryCountsMatchedBookCharactersInsteadOfSubtitleCues() {
+        val matchData = SasayakiMatchData(
+            matches = listOf(
+                SasayakiMatch("a", 0.0, 1.0, "日本語", 0, 0, 3),
+                SasayakiMatch("b", 1.0, 2.0, "文章", 0, 3, 2),
+            ),
+            unmatched = 1,
+        )
+
+        assertEquals(
+            "5/20 (25.0%)",
+            sasayakiSubtitleMatchSummary(matchData, characterCount = 20),
+        )
+    }
+
+    @Test
+    fun subtitleMatchSummaryIsAbsentWithoutMatchData() {
+        assertNull(sasayakiSubtitleMatchSummary(null))
+    }
+
+    @Test
+    fun subtitleCoverageIsAbsentWhenBookCharacterCountIsUnavailable() {
+        val matchData = SasayakiMatchData(emptyList(), unmatched = 1)
+        assertNull(sasayakiSubtitleMatchSummary(matchData))
+        assertNull(sasayakiSubtitleMatchSummary(matchData, characterCount = 0))
+    }
+
+    @Test
+    fun acceptedSubtitleSelectionStartsMatchingImmediately() {
+        val transition = SasayakiSubtitleMatchUiState(
+            errorMessage = "previous error",
+        ).acceptFile("book.srt")
+
+        assertTrue(transition.shouldStartMatching)
+        assertEquals("book.srt", transition.state.selectedFileName)
+        assertTrue(transition.state.isMatching)
+        assertNull(transition.state.errorMessage)
+    }
+
+    @Test
+    fun subtitleSelectionCannotStartAnotherMatchWhileOneIsRunning() {
+        val current = SasayakiSubtitleMatchUiState(
+            selectedFileName = "first.srt",
+            isMatching = true,
+        )
+
+        val transition = current.acceptFile("second.srt")
+
+        assertFalse(transition.shouldStartMatching)
+        assertEquals(current, transition.state)
+    }
+
+    @Test
+    fun subtitleMatchCompletionAllowsTheNextFileSelection() {
+        val completed = SasayakiSubtitleMatchUiState(
+            selectedFileName = "first.srt",
+            isMatching = true,
+        ).finishMatching(errorMessage = null)
+
+        val transition = completed.acceptFile("second.srt")
+
+        assertTrue(transition.shouldStartMatching)
+        assertEquals("second.srt", transition.state.selectedFileName)
+        assertTrue(transition.state.isMatching)
+    }
+
+    @Test
+    fun audiobookCoverUsesSquareArtworkFrame() {
+        assertEquals(SasayakiAudiobookCoverWidthDp, SasayakiAudiobookCoverHeightDp)
+    }
+
+    @Test
+    fun chapterRowInfoKeepsTitleAsPrimaryTextAndTimeAsTrailingText() {
+        val info = sasayakiChapterRowInfo(
+            SasayakiAudiobookChapter(
+                index = 1,
+                title = "  Chapter 2  ",
+                startSeconds = 65.0,
+                endSeconds = 120.0,
+            ),
+        )
+
+        assertEquals("Chapter 2", info.title)
+        assertEquals("1:05", formatSasayakiChapterRowTime(info.startSeconds))
+    }
+
+    @Test
+    fun currentChapterListIndexUsesTheChapterIdInsteadOfAssumingASequentialIndex() {
+        val chapters = listOf(
+            SasayakiAudiobookChapter(10, "Chapter 1", 0.0, 60.0),
+            SasayakiAudiobookChapter(20, "Chapter 2", 60.0, 120.0),
+        )
+
+        assertEquals(1, sasayakiCurrentChapterListIndex(chapters, chapters[1]))
+        assertNull(
+            sasayakiCurrentChapterListIndex(
+                chapters,
+                SasayakiAudiobookChapter(30, "Missing", 120.0, null),
+            ),
+        )
+        assertNull(sasayakiCurrentChapterListIndex(chapters, null))
+    }
+
+    @Test
+    fun playbackHeaderInfoUsesAudiobookMetadataAndCurrentChapter() {
+        val info = sasayakiPlaybackHeaderInfo(
+            playback = SasayakiPlaybackData(
+                lastPosition = 0.0,
+                audioFileName = "sasayaki_audio.m4b",
+            ),
+            metadata = SasayakiAudiobookMetadata(
+                title = "  M4B Title  ",
+                artist = " Narrator ",
+            ),
+            fallbackBookTitle = "Reader Book",
+            currentChapter = SasayakiAudiobookChapter(
+                index = 2,
+                title = " Chapter 3 ",
+                startSeconds = 42.0,
+                endSeconds = 84.0,
+            ),
+        )
+
+        assertEquals("M4B Title", info.title)
+        assertEquals("Narrator", info.artist)
+        assertEquals("Chapter 3", info.chapterTitle)
+    }
+
+    @Test
+    fun playbackHeaderInfoFallsBackToAudioFileNameThenBookTitle() {
+        assertEquals(
+            "Side Story",
+            sasayakiPlaybackHeaderInfo(
+                playback = SasayakiPlaybackData(
+                    lastPosition = 0.0,
+                    audioFileName = "Side Story.m4b",
+                ),
+                metadata = SasayakiAudiobookMetadata.Empty,
+                fallbackBookTitle = "Reader Book",
+                currentChapter = null,
+            ).title,
+        )
+        assertEquals(
+            "Reader Book",
+            sasayakiPlaybackHeaderInfo(
+                playback = SasayakiPlaybackData(
+                    lastPosition = 0.0,
+                    audioFileName = "sasayaki_audio.m4b",
+                ),
+                metadata = SasayakiAudiobookMetadata.Empty,
+                fallbackBookTitle = "Reader Book",
+                currentChapter = null,
+            ).title,
+        )
+    }
+
+    @Test
+    fun playbackHeaderHidesGeneratedCopyIdentifiers() {
+        val info = sasayakiPlaybackHeaderInfo(
+            playback = SasayakiPlaybackData(0.0, audioFileName = "sasayaki_audio_15d98183-e427-47b6-96a5-e274ae66edba.m4a"),
+            metadata = SasayakiAudiobookMetadata.Empty,
+            fallbackBookTitle = "Reader Book",
+            currentChapter = null,
+        )
+        assertEquals("Reader Book", info.title)
+    }
+
+    @Test
+    fun playbackHeaderInfoDoesNotExposeExternalDocumentUriAsTitle() {
+        val info = sasayakiPlaybackHeaderInfo(
+            playback = SasayakiPlaybackData(
+                lastPosition = 0.0,
+                audioUri = "content://com.android.externalstorage.documents/document/" +
+                    "primary%3A115yun%2Fdownload%2F%5B1%E5%B7%BB%5D%20Book%2001.m4b",
+            ),
+            metadata = SasayakiAudiobookMetadata.Empty,
+            fallbackBookTitle = "Reader Book",
+            currentChapter = null,
+        )
+
+        assertEquals("Reader Book", info.title)
+    }
+
+    @Test
+    fun playbackDurationUsesInspectedDurationUntilPlayerReportsAValidValue() {
+        assertEquals(321.0, sasayakiPlaybackDuration(playerDuration = 0.0, inspectedDuration = 321.0), 0.0)
+        assertEquals(321.0, sasayakiPlaybackDuration(playerDuration = Double.NaN, inspectedDuration = 321.0), 0.0)
+        assertEquals(322.0, sasayakiPlaybackDuration(playerDuration = 322.0, inspectedDuration = 321.0), 0.0)
+        assertEquals(0.0, sasayakiPlaybackDuration(playerDuration = 0.0, inspectedDuration = null), 0.0)
+    }
+}

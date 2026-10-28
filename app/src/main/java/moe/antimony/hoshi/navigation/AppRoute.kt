@@ -1,0 +1,60 @@
+package moe.antimony.hoshi.navigation
+
+import androidx.navigation3.runtime.NavKey
+import kotlinx.serialization.Serializable
+
+@Serializable
+sealed interface AppRoute : NavKey {
+    @Serializable
+    data object MainRoute : AppRoute
+
+    @Serializable
+    data object BooksRoute : AppRoute
+
+    @Serializable
+    data object DictionaryRoute : AppRoute
+
+    @Serializable
+    data object StatisticsRoute : AppRoute
+
+    @Serializable
+    data object StatisticsSettingsRoute : AppRoute
+
+    @Serializable
+    data class StatisticsBookRoute(val folder: String) : AppRoute
+
+    @Serializable
+    data object SettingsRoute : AppRoute
+
+    @Serializable
+    data class SettingsDetailRoute(
+        val section: SettingsDetailSection,
+    ) : AppRoute
+
+    @Serializable
+    data class AnkiCardFormatRoute(
+        val formatId: String,
+    ) : AppRoute
+
+    @Serializable
+    data object AnkiAdvancedRoute : AppRoute
+
+    @Serializable
+    data class ReaderRoute(
+        val bookId: String,
+    ) : AppRoute
+}
+
+@Serializable
+enum class SettingsDetailSection {
+    Study,
+    Dictionaries,
+    Anki,
+    Profiles,
+    Display,
+    Appearance,
+    Behavior,
+    Advanced,
+    Diagnostics,
+    About,
+}

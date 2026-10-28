@@ -1,0 +1,966 @@
+<resources>
+    <string name="app_name">Hoshi Reader</string>
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_done">Done</string>
+    <string name="action_back">Back</string>
+    <string name="action_forward">Forward</string>
+    <string name="action_close">Close</string>
+    <string name="reader_open_failed">Couldn\'t open book</string>
+    <string name="action_share">Share</string>
+    <string name="action_import" comment="Generic import action label.">Import</string>
+    <string name="action_export">Export</string>
+    <string name="action_update">Update</string>
+    <string name="action_download">Download</string>
+    <string name="action_install">Install</string>
+    <string name="action_later">Later</string>
+    <string name="action_skip">Skip</string>
+    <string name="action_reset">Reset</string>
+    <string name="action_configure">Configure</string>
+    <string name="action_decrease">Decrease</string>
+    <string name="action_increase">Increase</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_save">Save</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_choose">Choose</string>
+    <string name="action_open">Open</string>
+    <string name="action_more" comment="Generic action to reveal additional choices, distinct from the heatmap intensity endpoint.">More</string>
+    <string name="action_fetch">Fetch</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_sign_out">Sign out</string>
+    <string name="action_copy_code">Copy code</string>
+    <string name="action_scan">Scan</string>
+    <string name="loading">Loading...</string>
+    <string name="none" comment="Generic empty value label, intentionally matching bookshelf_no_shelf.">None</string>
+    <string name="dialog_error_title">Error</string>
+    <string name="import_select_epub_book">Select a .epub EPUB book file.</string>
+    <string name="import_select_srt_subtitle">Select a .srt subtitle file.</string>
+    <string name="import_select_audiobook">Select a .mp3, .m4b, .m4a, or .opus audiobook file.</string>
+    <string name="import_select_audio_database">Select a .db audio database file.</string>
+    <string name="import_select_dictionary_archive">Select a .zip dictionary archive file.</string>
+    <string name="import_select_hoshi_backup">Select a .hoshi Hoshi backup file.</string>
+    <string name="import_select_ttu_bookdata_backup">Select a .zip ッツ bookdata backup file.</string>
+    <string name="import_select_font">Select a .ttf, .otf, .woff, or .woff2 font file.</string>
+    <string name="main_tab_books" comment="Main navigation tab label, intentionally matching the backup Books section.">Books</string>
+    <string name="main_tab_dictionary">Dictionary</string>
+    <string name="main_tab_statistics" comment="Main navigation tab label, intentionally matching statistics page titles.">Statistics</string>
+    <string name="main_tab_settings" comment="Main navigation tab label, intentionally matching settings page titles.">Settings</string>
+    <string name="statistics_title" comment="Statistics page title, intentionally matching the main tab label.">Statistics</string>
+    <string name="statistics_today" comment="Statistics dashboard section title, intentionally matching reader statistics today label.">Today</string>
+    <string name="statistics_reading_duration" comment="Dashboard metric label, intentionally matching the duration legend and target type label.">Duration</string>
+    <string name="statistics_characters_read">Characters Read</string>
+    <string name="statistics_average_speed">Reading Speed</string>
+    <string name="statistics_target_days">Days Met</string>
+    <string name="statistics_range_year">Year</string>
+    <string name="statistics_range_month">Month</string>
+    <string name="statistics_range_week">Week</string>
+    <string name="statistics_selected_range_format">Selected: %1$s</string>
+    <string name="statistics_target_progress">Goal Progress</string>
+    <string name="statistics_duration" comment="Trend legend label, intentionally matching duration target type label.">Duration</string>
+    <string name="statistics_characters" comment="Trend legend label, intentionally matching characters target type label.">Characters</string>
+    <string name="statistics_daily_target">Daily Goal</string>
+    <string name="statistics_current_target">Current Goal</string>
+    <string name="statistics_target_type_characters" comment="Daily target type option, intentionally matching statistics characters legend label.">Characters</string>
+    <string name="statistics_target_type_duration" comment="Daily target type option, intentionally matching statistics duration legend label.">Duration</string>
+    <string name="statistics_no_reading_records">No reading records</string>
+    <string name="statistics_no_trend_data">No trend data</string>
+    <string name="statistics_partial_unavailable">Some statistics are temporarily unavailable.</string>
+    <string name="statistics_target_met">Goal met</string>
+    <string name="statistics_target_not_met">Goal not met</string>
+    <string name="statistics_trend_legend_format">%1$s / %2$s</string>
+    <string name="statistics_character_target_format" comment="Daily character target value, intentionally matching generic statistics character value format.">%1$s chars</string>
+    <string name="statistics_duration_target_format">%1$s</string>
+    <string name="statistics_characters_value_format" comment="Generic character metric value, intentionally matching daily character target value.">%1$s chars</string>
+    <string name="statistics_speed_value_format">%1$s/h</string>
+    <string name="statistics_percent_format">%1$d%%</string>
+    <string name="statistics_duration_minutes_format">%1$dm</string>
+    <string name="statistics_duration_hours_format">%1$dh</string>
+    <string name="statistics_duration_hours_minutes_format">%1$dh %2$dm</string>
+    <string name="statistics_range_fixed_year_format">%1$d</string>
+    <string name="statistics_range_month_title_pattern">MMMM yyyy</string>
+    <string name="statistics_range_week_title_format">%1$d/%2$d-%3$d/%4$d</string>
+    <string name="statistics_range_day_title_format">%1$d/%2$d %3$s</string>
+    <string name="statistics_distribution_meta_format" comment="Book editor character and duration metadata, sharing the separator with the overview caption.">%1$s · %2$s</string>
+    <string name="statistics_distribution_cover_placeholder">Book cover placeholder</string>
+    <string name="statistics_weekday_monday_short">M</string>
+    <string name="statistics_weekday_tuesday_short" comment="Single-letter Tuesday label, intentionally matching Thursday in English.">T</string>
+    <string name="statistics_weekday_wednesday_short">W</string>
+    <string name="statistics_weekday_thursday_short" comment="Single-letter Thursday label, intentionally matching Tuesday in English.">T</string>
+    <string name="statistics_weekday_friday_short">F</string>
+    <string name="statistics_weekday_saturday_short" comment="Single-letter Saturday label, intentionally matching Sunday in English.">S</string>
+    <string name="statistics_weekday_sunday_short" comment="Single-letter Sunday label, intentionally matching Saturday in English.">S</string>
+    <string name="statistics_weekday_monday">Mon</string>
+    <string name="statistics_weekday_tuesday">Tue</string>
+    <string name="statistics_weekday_wednesday">Wed</string>
+    <string name="statistics_weekday_thursday">Thu</string>
+    <string name="statistics_weekday_friday">Fri</string>
+    <string name="statistics_weekday_saturday">Sat</string>
+    <string name="statistics_weekday_sunday">Sun</string>
+    <plurals name="statistics_days_value">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <string name="settings_dictionaries" comment="Settings row label, intentionally matching the backup Dictionaries section.">Dictionaries</string>
+    <string name="settings_anki">Anki</string>
+    <string name="settings_profiles" comment="Settings row label, intentionally matching the Profiles screen title.">Profiles</string>
+    <string name="settings_display">Theme</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_behavior">Behavior</string>
+    <string name="settings_advanced">Advanced</string>
+    <string name="settings_report_issue">Report an Issue</string>
+    <string name="settings_diagnostics">Diagnostics</string>
+    <string name="settings_about">About</string>
+    <string name="settings_backup" comment="Advanced settings row label, intentionally matching the Backup action noun.">Backup</string>
+    <string name="settings_title" comment="Shared label for settings page titles distinct from the main tab key.">Settings</string>
+    <string name="settings_language">Language</string>
+    <string name="language_follow_system">Follow system</string>
+    <string name="language_english" translatable="false">English</string>
+    <string name="language_simplified_chinese" translatable="false">简体中文</string>
+    <string name="bookshelf_open_failed">Failed to open EPUB.</string>
+    <string name="bookshelf_import_failed">Failed to import EPUB.</string>
+    <string name="bookshelf_import_failed_list_format" comment="Bookshelf batch import failure summary; intentionally matches the dictionary batch import format.">Failed to import:\n%1$s</string>
+    <string name="bookshelf_import_files">Import files</string>
+    <string name="bookshelf_import_folder">Import folder</string>
+    <string name="bookshelf_scanning_folder">Scanning folder...</string>
+    <string name="bookshelf_no_epub_files_found">No EPUB files found.</string>
+    <string name="bookshelf_importing_epub">Importing EPUB...</string>
+    <string name="bookshelf_exporting_epub">Exporting EPUB...</string>
+    <string name="bookshelf_export_failed">Failed to export EPUB.</string>
+    <string name="bookshelf_exported_epub_format">Exported %1$s.</string>
+    <string name="bookshelf_importing_named_format">Importing %1$s...</string>
+    <string name="bookshelf_importing_progress_format">Importing %1$d / %2$d...</string>
+    <string name="bookshelf_legacy_migration_progress_format">Preparing older books %1$d / %2$d...</string>
+    <string name="bookshelf_sync_failed">Sync failed.</string>
+    <string name="bookshelf_remote_books_load_failed">Failed to fetch books from Google Drive.</string>
+    <string name="bookshelf_remote_book_import_failed">Failed to import book from Google Drive.</string>
+    <string name="bookshelf_remote_book_delete_failed">Failed to delete book from Google Drive.</string>
+    <string name="bookshelf_syncing">Syncing...</string>
+    <string name="bookshelf_synced_to_ttu_format">Synced %1$s to ッツ\n%2$d characters</string>
+    <string name="bookshelf_synced_from_ttu_format">Synced %1$s from ッツ\n%2$d characters</string>
+    <string name="bookshelf_already_synced_format">%1$s is already synced</string>
+    <string name="bookshelf_delete_book_title_format" comment="Delete confirmation, intentionally matching imported-font and profile delete confirmation formats.">Delete \"%1$s\"?</string>
+    <string name="bookshelf_delete_remote_book">Delete from Google Drive</string>
+    <string name="bookshelf_delete_remote_book_title_format">Delete \"%1$s\" from Google Drive?</string>
+    <string name="bookshelf_delete_remote_book_confirmation">This moves the remote Google Drive folder to trash. Local books are not deleted.</string>
+    <string name="bookshelf_mark_read_title_format">Mark \"%1$s\" as read?</string>
+    <string name="bookshelf_title_label" comment="Text-field label for renaming a book, distinct from the sort option.">Title</string>
+    <string name="bookshelf_section_reading">Reading</string>
+    <string name="bookshelf_section_unshelved">Unshelved</string>
+    <string name="bookshelf_section_google_drive" comment="Bookshelf remote section label, intentionally matching the Google Drive sync provider name.">Google Drive</string>
+    <string name="bookshelf_selected_count_format">%1$d Selected</string>
+    <string name="bookshelf_sort_books">Sort books</string>
+    <string name="bookshelf_sorting_by">Sorting by...</string>
+    <string name="bookshelf_sort_recent">Recent</string>
+    <string name="bookshelf_sort_title" comment="Sort option label, intentionally matching the title text-field label.">Title</string>
+    <string name="bookshelf_select_books">Select books</string>
+    <string name="bookshelf_move_selected_books">Move selected books</string>
+    <string name="bookshelf_new_shelf">New shelf…</string>
+    <string name="bookshelf_create_shelf">New Shelf</string>
+    <string name="bookshelf_create_and_move">Create and Move</string>
+    <string name="bookshelf_no_shelf" comment="Shelf picker empty value, intentionally matching generic none.">None</string>
+    <string name="bookshelf_delete_selected_books">Delete selected books</string>
+    <string name="bookshelf_manage_shelves">Manage Shelves</string>
+    <string name="bookshelf_hide_collapsed_shelf_thumbnails">Hide thumbnails when collapsed</string>
+    <string name="bookshelf_covers">Covers</string>
+    <string name="bookshelf_cover_mode_show">Show</string>
+    <string name="bookshelf_cover_mode_blur">Blur</string>
+    <string name="bookshelf_cover_mode_hide">Hide</string>
+    <string name="bookshelf_import_epub">Import EPUB</string>
+    <string name="bookshelf_sync" comment="Bookshelf sync action, intentionally matching the Statistics settings Sync heading.">Sync</string>
+    <string name="bookshelf_move">Move</string>
+    <string name="bookshelf_mark_read">Mark Read</string>
+    <string name="bookshelf_export_epub">Export EPUB</string>
+    <string name="bookshelf_reading_shelf">Reading Shelf</string>
+    <string name="bookshelf_reading_shelf_description">Shows books you\'ve started but not finished.</string>
+    <string name="bookshelf_shelves">Shelves</string>
+    <string name="bookshelf_no_shelves">No shelves</string>
+    <string name="bookshelf_move_shelf_up">Move shelf up</string>
+    <string name="bookshelf_move_shelf_down">Move shelf down</string>
+    <string name="bookshelf_rename_shelf">Rename shelf</string>
+    <string name="bookshelf_save_shelf_name">Save shelf name</string>
+    <string name="bookshelf_delete_shelf">Delete shelf</string>
+    <string name="bookshelf_shelf_name_exists">A shelf with this name already exists.</string>
+    <string name="bookshelf_create_shelf_failed">Failed to create the shelf. Try again.</string>
+    <string name="bookshelf_shelf_name">Shelf name</string>
+    <string name="bookshelf_add_shelf">Add shelf</string>
+    <string name="bookshelf_empty_title">No Books</string>
+    <string name="bookshelf_empty_message">Import an EPUB using the + button to start reading.</string>
+    <string name="bookshelf_selected">Selected</string>
+    <string name="bookshelf_not_selected">Not selected</string>
+    <string name="bookshelf_read">Read</string>
+    <plurals name="bookshelf_bulk_delete_title">
+        <item quantity="one">Delete %1$d book?</item>
+        <item quantity="other">Delete %1$d books?</item>
+    </plurals>
+    <plurals name="bookshelf_created_shelf_and_moved_books">
+        <item quantity="one">Created “%1$s” and moved %2$d book.</item>
+        <item quantity="other">Created “%1$s” and moved %2$d books.</item>
+    </plurals>
+    <string name="dictionary_select_zip_archive">Select a .zip dictionary archive.</string>
+    <string name="dictionary_download_failed">Failed to download dictionaries.</string>
+    <string name="dictionary_update_failed">Failed to update dictionaries.</string>
+    <string name="dictionary_update_failed_list_format">Failed to update:\n%1$s</string>
+    <string name="dictionary_import_failed">Failed to import dictionary.</string>
+    <string name="dictionary_import_failed_list_format" comment="Dictionary batch import failure summary; intentionally matches the bookshelf batch import format.">Failed to import:\n%1$s</string>
+    <string name="dictionary_fetching_named_format">Fetching %1$s</string>
+    <string name="dictionary_checking_named_format">Checking %1$s</string>
+    <string name="dictionary_downloading_named_format">Downloading %1$s</string>
+    <string name="dictionary_importing_named_format">Importing %1$s</string>
+    <string name="dictionary_importing_default">Importing dictionary</string>
+    <string name="dictionary_download_recommended">Download Recommended Dictionaries</string>
+    <string name="dictionary_download_stroke_order_font">Download Stroke Order Font</string>
+    <string name="dictionary_stroke_order_font_dialog_title">Download Font</string>
+    <string name="dictionary_stroke_order_font_dialog_message">This will download and automatically import the Kanji stroke order font (17 MB).</string>
+    <string name="dictionary_stroke_order_font_downloading">Downloading and importing the stroke order font…</string>
+    <string name="dictionary_stroke_order_font_download_failed">Couldn’t download and import the stroke order font. Check your connection and try again.</string>
+    <string name="dictionary_supported_archive_types">Yomitan term, frequency, pitch, and Kanji dictionaries (.zip) are supported</string>
+    <string name="dictionary_default_tab">Default to Dictionary Tab</string>
+    <string name="dictionary_empty_type_format">No %1$s Dictionaries</string>
+    <string name="dictionary_updates_section" comment="Dictionary settings section label for installed dictionary update controls; intentionally matches the About update section label.">Updates</string>
+    <string name="dictionary_update_automatically">Update Automatically</string>
+    <string name="dictionary_update_interval">Interval</string>
+    <string name="dictionary_last_update">Last Update</string>
+    <string name="dictionary_last_update_never">Never</string>
+    <string name="dictionary_update_interval_daily">Daily</string>
+    <string name="dictionary_update_interval_weekly">Weekly</string>
+    <string name="dictionary_update_interval_monthly">Monthly</string>
+    <string name="dictionary_update_title">Update Dictionaries</string>
+    <string name="dictionary_update_confirmation_format">This will check for and install updates for these dictionaries:\n%1$s</string>
+    <string name="dictionary_download_title">Download Dictionaries</string>
+    <string name="dictionary_download_prompt">Choose a dictionary to download and import:</string>
+    <string name="dictionary_download_no_recommended">No recommended dictionaries for this profile language.</string>
+    <string name="dictionary_download_item_format">%1$s (%2$s)</string>
+    <string name="dictionary_type_term">Term</string>
+    <string name="dictionary_type_frequency">Frequency</string>
+    <string name="dictionary_type_pitch">Pitch</string>
+    <string name="dictionary_type_kanji">Kanji</string>
+    <string name="dictionary_category_none" comment="Dictionary category for uncategorized term dictionaries, intentionally matching generic none.">None</string>
+    <string name="dictionary_category_monolingual">Monolingual</string>
+    <string name="dictionary_category_bilingual">Bilingual</string>
+    <string name="dictionary_category_exclude">Exclude</string>
+    <string name="dictionary_category_update_failed">Failed to update the dictionary category.</string>
+    <string name="anki_categorize_dictionaries">Categorize dictionaries</string>
+    <string name="dictionary_custom_css">Custom CSS</string>
+    <string name="dictionary_custom_css_reset_title">Reset Custom CSS?</string>
+    <string name="dictionary_custom_css_reset_message">This will clear your custom CSS.</string>
+    <string name="dictionary_import_action">Import Dictionary</string>
+    <string name="dictionary_delete_action">Delete Dictionary</string>
+    <string name="dictionary_reorder_action">Reorder Dictionary</string>
+    <string name="dictionary_settings_lookup">Lookup</string>
+    <string name="dictionary_settings_search_text">Search Text</string>
+    <string name="dictionary_settings_import" comment="Dictionary settings section label, intentionally matching the Import action noun.">Import</string>
+    <string name="dictionary_scan_non_japanese">Scan Non-Japanese Text</string>
+    <string name="dictionary_max_results">Max Results</string>
+    <string name="dictionary_scan_length">Scan Length</string>
+    <string name="dictionary_text_size">Text Size</string>
+    <string name="dictionary_collapse_dictionaries">Collapse Dictionaries</string>
+    <string name="dictionary_collapse_mode_expand_all">Expand All</string>
+    <string name="dictionary_collapse_mode_collapse_all">Collapse All</string>
+    <string name="dictionary_collapse_mode_custom" comment="Dictionary collapse mode option, distinct from reader appearance custom theme.">Custom</string>
+    <string name="dictionary_mode" comment="Dictionary setting label, intentionally matching reader appearance mode.">Mode</string>
+    <string name="dictionary_expand_first">Expand First Dictionary</string>
+    <string name="dictionary_settings_behaviour" comment="Settings group label, intentionally shared with Sync settings.">Behaviour</string>
+    <string name="dictionary_compact_glossaries" comment="Dictionary setting label, intentionally matching Anki compact glossaries.">Compact Glossaries</string>
+    <string name="dictionary_show_expression_tags">Show Expression Tags</string>
+    <string name="dictionary_harmonic_frequency">Harmonic Frequency</string>
+    <string name="dictionary_deduplicate_pitch">Deduplicate Pitch Accents</string>
+    <string name="dictionary_compact_pitch">Compact Pitch Accents</string>
+    <string name="dictionary_low_ram_import">Low Memory Usage Mode</string>
+    <string name="dictionary_low_ram_import_description">Reduces memory usage during dictionary import. Recommended on devices with low RAM (&lt; 3 GB).</string>
+    <string name="dictionary_no_term_dictionaries">No term dictionaries</string>
+    <string name="dictionary_collapsed">Collapsed</string>
+    <string name="dictionary_expanded">Expanded</string>
+    <string name="dictionary_custom_css_font" comment="Custom CSS font setting, intentionally matching reader font labels.">Font</string>
+    <string name="dictionary_custom_css_selector">Selector</string>
+    <string name="dictionary_search_placeholder" comment="Dictionary search field placeholder, intentionally matching reader search tab label.">Search</string>
+    <string name="dictionary_lookup_failed">Lookup failed.</string>
+    <string name="dictionary_pull_clear">Pull down to clear</string>
+    <string name="dictionary_release_clear">Release to clear</string>
+    <string name="dictionary_pull_show_keyboard">Pull down to show keyboard</string>
+    <string name="dictionary_release_show_keyboard">Release to show keyboard</string>
+    <string name="dictionary_play_audio">Play Audio</string>
+    <string name="dictionary_add_to_anki">Add to Anki</string>
+    <string name="profile_language_japanese">Japanese</string>
+    <string name="profile_language_english">English</string>
+    <string name="profiles_title" comment="Profiles screen title, intentionally matching the Settings row label.">Profiles</string>
+    <string name="profiles_active_global">Active Profile</string>
+    <string name="profiles_loaded_reader">Reader Profile</string>
+    <string name="profiles_language">Profile Language</string>
+    <string name="profiles_default_for_language_format">Default for %1$s</string>
+    <string name="profiles_current_profile">Current</string>
+    <string name="profiles_create">Create Profile</string>
+    <string name="profiles_create_copy_settings_note">The new profile starts as a copy of settings from the current active profile.</string>
+    <string name="profiles_new_profile_name">Profile name</string>
+    <string name="profiles_delete_title_format" comment="Profile delete confirmation, intentionally matching book and imported-font delete confirmation formats.">Delete \"%1$s\"?</string>
+    <string name="profiles_default_cannot_delete">The default profile cannot be deleted.</string>
+    <string name="bookshelf_profile">Profile</string>
+    <string name="bookshelf_profile_automatic" comment="Automatically choose the content language profile for a book.">Automatic</string>
+    <string name="bookshelf_profile_automatic_uses_format">Uses %1$s</string>
+    <string name="reader_behavior_volume_keys_turn_pages">Volume Keys Turn Pages</string>
+    <string name="reader_behavior_volume_keys_navigate_popup_terms">Volume Keys Navigate Popup Terms</string>
+    <string name="reader_behavior_volume_keys_seek_sasayaki">Volume Keys Seek Sasayaki</string>
+    <string name="reader_behavior_reverse_volume_key_direction">Reverse Volume Key Direction</string>
+    <string name="reader_behavior_keep_screen_on">Keep Screen On</string>
+    <string name="reader_behavior_lock_current_orientation">Lock Current Orientation</string>
+    <string name="reader_behavior_open_last_read_book_on_launch">Open Last Read Book on Launch</string>
+    <string name="reader_behavior_auto_check_updates">Automatically Check for Updates</string>
+    <string name="reader_statistics_pause">Pause statistics</string>
+    <string name="reader_statistics_start">Start statistics</string>
+    <string name="reader_jump_back">Return to previous jump position</string>
+    <string name="reader_jump_forward">Return to later jump position</string>
+    <string name="reader_menu">Reader Menu</string>
+    <string name="reader_go_to">Contents</string>
+    <string name="reader_search" comment="Reader Contents panel tab label, distinct from dictionary search placeholder.">Search</string>
+    <string name="reader_search_in_book">Search in this book</string>
+    <string name="reader_search_empty_prompt">Enter text to search this book</string>
+    <string name="reader_searching">Searching...</string>
+    <string name="reader_no_search_results">No matches</string>
+    <string name="reader_search_failed">Could not search this book</string>
+    <plurals name="reader_search_result_count">
+        <item quantity="one">%d result</item>
+        <item quantity="other">%d results</item>
+    </plurals>
+    <string name="reader_image_clip_label">Hoshi reader image</string>
+    <string name="reader_image_copied">Image copied.</string>
+    <string name="reader_image_saved">Image saved.</string>
+    <string name="reader_image_save_failed">Could not save image.</string>
+    <string name="reader_chapters" comment="Reader chapter-list label; Sasayaki intentionally reuses the same visible label for audiobook chapters.">Chapters</string>
+    <string name="reader_gallery">Gallery</string>
+    <string name="reader_gallery_image">Gallery image</string>
+    <string name="reader_no_images">No Images</string>
+    <string name="reader_highlights">Highlights</string>
+    <string name="reader_statistics" comment="Reader menu label, intentionally matching advanced statistics.">Statistics</string>
+    <string name="reader_untitled_chapter">Untitled</string>
+    <string name="reader_jump_to_character">Jump to Character</string>
+    <string name="reader_jump_to_word">Jump to Word</string>
+    <string name="reader_character">Character</string>
+    <string name="reader_word" comment="Jump input field label for English-profile approximate word jump.">Word</string>
+    <string name="reader_jump">Jump</string>
+    <string name="reader_no_highlights">No Highlights</string>
+    <string name="reader_delete_highlight">Delete highlight</string>
+    <string name="reader_highlight_action">Highlight</string>
+    <string name="reader_statistics_session">Session</string>
+    <string name="reader_statistics_today" comment="Reader statistics section title, intentionally matching dashboard today label.">Today</string>
+    <string name="reader_statistics_all_time" comment="Reader lifetime summary tab, independent of the dashboard period caption.">All Time</string>
+    <string name="reader_statistics_time_to_finish_book">Time to finish Book:</string>
+    <string name="reader_statistics_time_to_finish_chapter">Time to finish Chapter:</string>
+    <string name="reader_statistics_characters_read">Characters Read:</string>
+    <string name="reader_statistics_words_read">Words Read:</string>
+    <string name="reader_statistics_reading_speed">Reading Speed:</string>
+    <string name="reader_statistics_reading_time">Reading Time:</string>
+    <string name="reader_statistics_autostart_on_book_open">Start on Book Open</string>
+    <string name="reader_statistics_autostart_on_page_turn">Start on Page Turn</string>
+    <string name="reader_statistics_reset_time">Reset Time</string>
+    <string name="reader_statistics_sync_behaviour">Sync Behaviour</string>
+    <string name="reader_statistics_sync_behaviour_hint">Determines whether statistics are merged entry by entry or replaced completely during sync.</string>
+    <string name="reader_statistics_sync_mode_merge">Merge</string>
+    <string name="reader_statistics_sync_mode_replace">Replace</string>
+    <string name="reader_statistics_settings_hint">Statistics can be accessed from the Reader\'s context menu.</string>
+    <string name="reader_appearance_text">Text</string>
+    <string name="reader_appearance_layout">Layout</string>
+    <string name="reader_appearance_display">Display</string>
+    <string name="reader_appearance_progress">Progress</string>
+    <string name="reader_appearance_popup">Popup</string>
+    <string name="reader_appearance_theme_light">Light</string>
+    <string name="reader_appearance_theme_dark">Dark</string>
+    <string name="reader_appearance_theme_sepia">Sepia</string>
+    <string name="reader_appearance_theme_custom" comment="Reader Appearance theme option, distinct from dictionary collapse custom mode.">Custom</string>
+    <string name="reader_appearance_background_color">Background Color</string>
+    <string name="reader_appearance_text_color">Text Color</string>
+    <string name="reader_appearance_info_color">Info Color</string>
+    <string name="reader_appearance_color_hex">Hex</string>
+    <string name="reader_appearance_color_invalid">Use #RRGGBB or #RRGGBBAA.</string>
+    <string name="reader_appearance_color_alpha">Alpha</string>
+    <string name="reader_appearance_color_red" comment="RGB color editor channel label; distinct from interface accent preset names.">Red</string>
+    <string name="reader_appearance_color_green" comment="RGB color editor channel label; distinct from interface accent preset names.">Green</string>
+    <string name="reader_appearance_color_blue" comment="RGB color editor channel label; distinct from interface accent preset names.">Blue</string>
+    <string name="reader_appearance_text_orientation">Text Orientation</string>
+    <string name="reader_appearance_vertical">Vertical</string>
+    <string name="reader_appearance_horizontal">Horizontal</string>
+    <string name="reader_appearance_font" comment="Reader font setting, intentionally matching dictionary custom CSS font.">Font</string>
+    <string name="reader_appearance_font_publisher">Publisher Font</string>
+    <string name="reader_appearance_font_system_serif">System Serif</string>
+    <string name="reader_appearance_font_system_sans_serif">System Sans Serif</string>
+    <string name="reader_appearance_font_imported">Imported</string>
+    <string name="reader_appearance_font_variant">Variant</string>
+    <string name="reader_appearance_font_variant_publisher">Determined by publisher</string>
+    <string name="reader_appearance_font_variant_format">%1$s (%2$d)</string>
+    <string name="reader_appearance_font_download_size_format">Download · %1$s</string>
+    <string name="reader_appearance_font_downloading_item_format">%1$s · Downloading %2$d%%</string>
+    <string name="reader_appearance_font_download_failed">Couldn’t download and verify this font. Check your connection and try again.</string>
+    <string name="reader_appearance_font_import_failed">This font could not be imported. Use a valid TTF, OTF, WOFF, or WOFF2 file.</string>
+    <string name="reader_appearance_font_category_serif">Serif / Mincho</string>
+    <string name="reader_appearance_font_category_sans">Sans serif / Gothic</string>
+    <string name="reader_appearance_font_category_rounded">Rounded</string>
+    <string name="reader_appearance_font_category_handwriting">Handwriting / Body</string>
+    <string name="reader_appearance_font_retry">Retry</string>
+    <string name="reader_appearance_import_font">Import Font</string>
+    <string name="reader_appearance_importing" comment="Generic import progress label, intentionally shared with ッツ backup import.">Importing...</string>
+    <string name="reader_appearance_font_size">Font Size</string>
+    <string name="reader_furigana_off" comment="Furigana visibility mode that shows annotations normally; intentionally matches other off labels.">Off</string>
+    <string name="reader_furigana_dimmed">Dimmed</string>
+    <string name="reader_furigana_toggle">Toggle</string>
+    <string name="reader_furigana_hidden">Hidden</string>
+    <string name="reader_appearance_hide_furigana">Hide Furigana</string>
+    <string name="reader_appearance_mode" comment="Reader appearance setting label, intentionally matching dictionary mode.">Mode</string>
+    <string name="reader_appearance_paginated">Paginated</string>
+    <string name="reader_appearance_continuous">Continuous</string>
+    <string name="reader_appearance_visual_novel">VN</string>
+    <string name="reader_visual_novel_reveal_speed">Text Reveal Speed</string>
+    <string name="reader_visual_novel_reveal_speed_instant">Instant</string>
+    <string name="reader_visual_novel_screen_mode">Screen Content</string>
+    <string name="reader_visual_novel_screen_mode_block">Block</string>
+    <string name="reader_visual_novel_screen_mode_sentences">Sentences</string>
+    <string name="reader_visual_novel_sentences_per_screen">Sentences per Screen</string>
+    <string name="reader_visual_novel_preserve_dialogue">Keep Dialogue Together</string>
+    <string name="reader_visual_novel_click_advance">Tap Blank Area to Advance</string>
+    <string name="reader_visual_novel_merge_cross_screen_sasayaki_cues">Keep Sasayaki Text Together</string>
+    <string name="reader_appearance_chapter_swipe_distance">Chapter Swipe Distance</string>
+    <string name="reader_appearance_page_swipe_threshold">Page Swipe Threshold</string>
+    <string name="reader_appearance_page_swipe_threshold_value">%1$d px</string>
+    <string name="reader_appearance_page_swipe_disabled" comment="Paginated and VN Reader swipe-threshold value; intentionally matches other off labels.">Off</string>
+    <string name="reader_appearance_horizontal_padding">Horizontal Padding</string>
+    <string name="reader_appearance_vertical_padding">Vertical Padding</string>
+    <string name="reader_appearance_top_safe_area">Top Safe Area</string>
+    <string name="reader_appearance_bottom_safe_area">Bottom Safe Area</string>
+    <string name="reader_appearance_avoid_page_break">Avoid Page Break</string>
+    <string name="reader_appearance_justify_text">Justify Text</string>
+    <string name="reader_appearance_blur_images">Blur Images</string>
+    <string name="reader_appearance_line_height">Line Height</string>
+    <string name="reader_appearance_character_spacing">Character Spacing</string>
+    <string name="reader_appearance_paragraph_spacing">Paragraph Spacing</string>
+    <string name="reader_appearance_show_title">Show Title</string>
+    <string name="reader_appearance_show_progress">Show Progress</string>
+    <string name="reader_appearance_show_chapter_progress">Show Chapter Progress</string>
+    <string name="reader_appearance_show_character_count">Show Character Count</string>
+    <string name="reader_appearance_show_word_count">Show Word Count</string>
+    <string name="reader_appearance_show_percentage">Show Percentage</string>
+    <string name="reader_appearance_always_show_progress">Always Show Progress</string>
+    <string name="reader_appearance_show_back_button">Show Back Button</string>
+    <string name="reader_appearance_progress_position">Progress Position</string>
+    <string name="reader_appearance_progress_top">Top</string>
+    <string name="reader_appearance_progress_bottom">Bottom</string>
+    <string name="reader_appearance_show_statistics_toggle">Show Statistics Toggle</string>
+    <string name="reader_appearance_show_reading_speed">Show Reading Speed</string>
+    <string name="reader_appearance_show_reading_time">Show Reading Time</string>
+    <string name="reader_appearance_show_sasayaki_toggle">Show Sasayaki Toggle</string>
+    <string name="reader_appearance_width">Width</string>
+    <string name="reader_appearance_height">Height</string>
+    <string name="reader_appearance_scale">Scale</string>
+    <string name="reader_appearance_reduced_motion_scrolling">Reduced Motion Scrolling</string>
+    <string name="reader_appearance_scroll_amount">Scroll Amount</string>
+    <string name="reader_appearance_scroll_swipe_threshold">Scroll Swipe Threshold</string>
+    <string name="reader_appearance_show_action_bar">Show Action Bar</string>
+    <string name="reader_appearance_full_width">Full-width</string>
+    <string name="reader_appearance_swipe_to_dismiss">Swipe to Dismiss</string>
+    <string name="reader_appearance_swipe_threshold">Swipe Threshold</string>
+    <string name="reader_appearance_delete_font_title_format" comment="Imported-font delete confirmation, intentionally matching book and profile delete confirmation formats.">Delete \"%1$s\"?</string>
+    <string name="action_enable">Enable</string>
+    <string name="sync_ttu_sync">ッツ Sync</string>
+    <string name="sync_title">Syncing</string>
+    <string name="sync_section_behaviour" comment="Sync settings group label, intentionally matching other settings group labels.">Behaviour</string>
+    <string name="sync_section_data">Data</string>
+    <string name="sync_direction">Direction</string>
+    <string name="sync_auto_sync">Auto Sync</string>
+    <string name="sync_upload_books">Upload Books</string>
+    <string name="sync_upload_books_description">Upload ッツ bookdata to Google Drive when a synced book folder is missing bookdata.</string>
+    <string name="sync_stats">Sync Stats</string>
+    <string name="sync_audiobook_progress">Sync Audiobook Progress</string>
+    <string name="sync_clear_cache">Clear Google Drive cache</string>
+    <string name="sync_cache_cleared">Google Drive cache cleared.</string>
+    <string name="sync_clear_cache_title">Clear Google Drive cache?</string>
+    <string name="sync_clear_cache_confirmation">Hoshi will clear cached Google Drive folder IDs and remote cover thumbnails. Local books are not deleted.</string>
+    <string name="sync_sign_out_title">Sign out of Google Drive?</string>
+    <string name="sync_sign_out_confirmation">Hoshi will disconnect Google Drive and clear cached Drive folders. Local books are not deleted.</string>
+    <string name="sync_mode_auto" comment="Automatic synchronization mode.">Auto</string>
+    <string name="sync_mode_manual">Manual</string>
+    <string name="sync_google_drive" comment="Sync provider label, intentionally matching the bookshelf remote Google Drive section.">Google Drive</string>
+    <string name="sync_device_client_id">Device client ID</string>
+    <string name="sync_device_client_secret">Device client secret</string>
+    <string name="sync_authorize_google_drive">Authorize Google Drive</string>
+    <string name="sync_google_device_code">Google device code</string>
+    <string name="sync_device_code_copied">Device code copied</string>
+    <string name="sync_connect_google_drive">Connect Google Drive</string>
+    <string name="sync_device_code_setup">ッツ Sync setup</string>
+    <string name="sync_ttu_google_cloud_setup">ッツ Sync guide</string>
+    <string name="sync_device_code_intro">Google Drive sync uses Device Code flow so this Android app can use the same user-owned Google Cloud project described in the ッツ Sync guide.</string>
+    <string-array name="sync_device_code_instructions">
+        <item>Follow the ッツ Sync guide to create or open the shared Google Cloud project, publish the OAuth consent screen, and enable the Google Drive API.</item>
+        <item>In that same project, open Google Auth Platform -&gt; Clients in the Google Cloud Console, click CREATE CLIENT, and select application type TVs and Limited Input devices.</item>
+        <item>Copy the client ID and client secret from that TVs and Limited Input devices client and paste them here. Do not use the iOS bundle ID or a standard Android OAuth client for this flow.</item>
+        <item>Press Connect Google Drive, copy the code shown by Hoshi, open the verification URL, and enter the code.</item>
+        <item>If the verification URL is hard to use on this device, open the Google device page on another phone or computer and enter the same code.</item>
+        <item>Authorize the Google Account whose Drive contains the ッツ or Hoshi sync folder.</item>
+    </string-array>
+    <string name="sync_google_drive_authorization_failed">Google Drive authorization failed.</string>
+    <string name="sync_google_drive_authorization_expired">Google Drive authorization code expired.</string>
+    <string name="sync_google_drive_open_link_prompt">Open this link on this device or another phone/computer:</string>
+    <string name="sync_google_drive_open_code_format">Open %1$s on this device or another phone/computer and enter %2$s.</string>
+    <string name="sync_google_drive_transient_network_format">Hoshi cannot reach Google from this device right now. Keep this screen open, or open %1$s on another phone/computer and enter %2$s.</string>
+    <string name="sync_status_connected" comment="Sync connection state, intentionally matching AnkiConnect connection state.">Connected</string>
+    <string name="sync_status_not_connected" comment="Sync connection state, intentionally matching AnkiConnect connection state.">Not connected</string>
+    <string name="sync_status_missing_configuration">OAuth client not configured</string>
+    <string name="update_downloaded_title">Update Downloaded</string>
+    <string name="update_downloaded_message_format" comment="Downloaded update prompt message, intentionally matching About update status.">Update %1$s has been downloaded.</string>
+    <string name="update_available_title">Update Available</string>
+    <string name="update_available_message_format">Hoshi Reader %1$s is available.</string>
+    <string name="backup_books" comment="Backup section label, intentionally matching the Books tab label.">Books</string>
+    <string name="backup_dictionaries" comment="Backup section label, intentionally matching the Dictionaries settings label.">Dictionaries</string>
+    <string name="backup_ttu_bookdata">ッツ Backup</string>
+    <string name="backup_ttu_bookdata_description">Importing a backup adds new books and overwrites the statistics and reading progress of books already present.</string>
+    <string name="backup_books_saved">Books backup saved.</string>
+    <string name="backup_books_save_failed">Unable to save Books backup.</string>
+    <string name="backup_dictionaries_saved">Dictionaries backup saved.</string>
+    <string name="backup_dictionaries_save_failed">Unable to save Dictionaries backup.</string>
+    <string name="backup_ttu_saved">ッツ bookdata backup saved.</string>
+    <string name="backup_ttu_save_failed">Unable to save ッツ bookdata backup.</string>
+    <string name="backup_books_restored">Books restored.</string>
+    <string name="backup_books_restore_failed">Unable to restore Books backup.</string>
+    <string name="backup_dictionaries_restored">Dictionaries restored.</string>
+    <string name="backup_dictionaries_restore_failed">Unable to restore Dictionaries backup.</string>
+    <string name="backup_ttu_restored">ッツ bookdata imported.</string>
+    <string name="backup_ttu_restore_failed">Unable to import ッツ bookdata backup.</string>
+    <string name="backup_restore_overwrites">Restoring will overwrite the current collection.</string>
+    <string name="backup_action_backup" comment="Verb for creating a backup, intentionally matching the Backup settings noun.">Backup</string>
+    <string name="backup_action_restore">Restore</string>
+    <string name="backup_archiving">Archiving...</string>
+    <string name="backup_restoring">Restoring...</string>
+    <string name="backup_exporting">Exporting...</string>
+    <string name="backup_importing" comment="ッツ backup import progress label, intentionally matching the generic importing progress text.">Importing...</string>
+    <string name="advanced_audio">Audio</string>
+    <string name="advanced_sasayaki_audiobooks">Sasayaki (Audiobooks)</string>
+    <string name="advanced_sasayaki_subtitle">Read along with matched audiobook subtitles</string>
+    <string name="audio_sources">Sources</string>
+    <string name="audio_add_source">Add Source</string>
+    <string name="audio_name">Name</string>
+    <string name="audio_url">URL</string>
+    <string name="audio_yomitan_json_supported">Yomitan JSON audio sources are supported</string>
+    <string name="audio_auto_play_on_lookup">Auto-play on Lookup</string>
+    <string name="audio_background_audio">Background Audio</string>
+    <string name="audio_playback_interrupt">Interrupt</string>
+    <string name="audio_playback_duck">Lower Volume</string>
+    <string name="audio_playback_mix">Keep Volume</string>
+    <string name="audio_local_audio">Local Audio</string>
+    <string name="audio_import_android_db">Import android.db</string>
+    <string name="audio_import_android_db_hint">Copies the selected database in the background</string>
+    <string name="audio_import_failed">Import failed</string>
+    <string name="audio_import_android_db_failed">Unable to import android.db.</string>
+    <string name="audio_android_db_size_format">android.db (%1$s)</string>
+    <string name="audio_local_audio_hint">1. Import copies android.db into Hoshi\'s private storage, so keep enough free space for one extra copy before importing.\n2. After import completes, you can safely delete the original external file to free space.</string>
+    <string name="audio_copying_android_db">Copying android.db</string>
+    <string name="audio_copied_size_format">%1$s of %2$s</string>
+    <string name="audio_move_source_up">Move source up</string>
+    <string name="audio_move_source_down">Move source down</string>
+    <string name="audio_delete_source">Delete source</string>
+    <string name="audio_local_source_order">Local database sources</string>
+    <string name="audio_move_local_source_up">Move local audio source up</string>
+    <string name="audio_move_local_source_down">Move local audio source down</string>
+    <string name="audio_local_source_save_failed">Unable to save local audio source settings.</string>
+    <string name="audio_no_audio_found">No audio found</string>
+    <string name="anki_fetch_decks_ankiconnect">Fetch decks and note types from AnkiConnect.</string>
+    <string name="anki_fetch_decks_ankidroid">Fetch decks and note types from AnkiDroid.</string>
+    <string name="anki_open_app_settings">Open App Settings</string>
+    <string name="anki_fetching">Fetching</string>
+    <string name="anki_deck" comment="Anki deck selector label, intentionally matching duplicate scope deck label.">Deck</string>
+    <string name="anki_model">Model</string>
+    <string name="anki_allow_duplicates">Allow Duplicates</string>
+    <string name="anki_check_duplicates_all_models">Check for duplicates across all models</string>
+    <string name="anki_duplicate_check_scope">Duplicate Check Scope</string>
+    <string name="anki_compact_glossaries" comment="Anki setting label, intentionally matching dictionary compact glossaries.">Compact Glossaries</string>
+    <string name="anki_droid_force_sync">Sync AnkiDroid after adding card</string>
+    <string name="anki_droid_force_sync_description">Starts AnkiDroid sync after a card is added. AnkiDroid may ignore syncs run more often than every 5 minutes.</string>
+    <string name="anki_fields">Fields</string>
+    <string name="anki_tags">Tags</string>
+    <string name="anki_handlebar">Handlebar</string>
+    <string name="anki_format">Card Format</string>
+    <string name="anki_format_default_name">Format %1$d</string>
+    <string name="anki_add_format">Add Card Format</string>
+    <string name="anki_duplicate_format">Duplicate This Format</string>
+    <string name="anki_delete_format_title">Delete “%1$s”?</string>
+    <string name="anki_delete_format_confirmation">This permanently deletes the card format and its field mappings from Hoshi.</string>
+    <string name="anki_format_name">Format Name</string>
+    <string name="anki_format_icon">Icon</string>
+    <string name="anki_icon_square">Square</string>
+    <string name="anki_icon_square_small">Small square</string>
+    <string name="anki_icon_circle">Circle</string>
+    <string name="anki_icon_circle_small">Small circle</string>
+    <string name="anki_icon_diamond">Diamond</string>
+    <string name="anki_icon_diamond_small">Small diamond</string>
+    <string name="anki_disable_show_notes">Hide note search buttons</string>
+    <string name="anki_selected_glossary_fallback">{selected-glossary} Fallback</string>
+    <string name="anki_show_all_handlebars">Show all handlebars</string>
+    <string name="anki_fetch_confirm_title">Reset card formats?</string>
+    <string name="anki_fetch_confirm_message">Fetching decks and models resets every card format to the default deck, first model, and its default field mappings. Names, icons, and tags are kept.</string>
+    <string name="anki_duplicate_scope_collection">Collection</string>
+    <string name="anki_duplicate_scope_deck" comment="Duplicate scope label, intentionally matching Anki deck selector label.">Deck</string>
+    <string name="anki_duplicate_scope_deck_root">Deck Root</string>
+    <string name="anki_connect_address">Address</string>
+    <string name="anki_connect_url">AnkiConnect URL</string>
+    <string name="anki_connect_api_key">API Key (optional)</string>
+    <string name="anki_connect_api_key_configured">Configured</string>
+    <string name="anki_connect_use">Use AnkiConnect</string>
+    <string name="anki_connect_use_description">This replaces AnkiDroid requests with AnkiConnect JSON requests.</string>
+    <string name="anki_connect_setup_warning_title">Most users do not need AnkiConnect</string>
+    <string name="anki_connect_setup_warning_message">Hoshi can fetch decks and note types and create cards directly through AnkiDroid with no extra setup.\n\nAnkiConnect is intended only for users who run their own instance and understand how to configure it. Once enabled, it replaces AnkiDroid; incorrect setup will prevent Hoshi from fetching decks and note types or creating cards. Unless you know you need it, leave this switch off.</string>
+    <string name="anki_connect_address_help">Use HTTPS for internet hosts. HTTP is accepted only for localhost and private network addresses.</string>
+    <string name="anki_connect_connection">Connection</string>
+    <string name="anki_connect_connected" comment="AnkiConnect connection state, intentionally matching sync connection state.">Connected</string>
+    <string name="anki_connect_not_connected" comment="AnkiConnect connection state, intentionally matching sync connection state.">Not connected</string>
+    <string name="anki_connect_connecting">Connecting</string>
+    <string name="anki_connect_check_all_models">Check All Models</string>
+    <string name="anki_connect_force_sync">Force Sync on adding card</string>
+    <string name="anki_connect_duplicate_scope">Duplicate Scope</string>
+    <string name="anki_fetch_configure_failed">Unable to configure Anki.</string>
+    <string name="anki_fetch_api_unavailable">AnkiDroid is unavailable. Install AnkiDroid, then try again.</string>
+    <string name="anki_fetch_permission_denied">AnkiDroid database access was denied. Grant the permission to fetch decks and note types.</string>
+    <string name="anki_fetch_deck_list_unavailable">Unable to read AnkiDroid decks. Open AnkiDroid and try again.</string>
+    <string name="anki_fetch_model_list_unavailable">Unable to read AnkiDroid note types. Open AnkiDroid and try again.</string>
+    <string name="anki_fetch_model_fields_unavailable">Unable to read fields for one or more AnkiDroid note types.</string>
+    <string name="anki_fetch_provider_failure">AnkiDroid did not respond while fetching decks and note types. Open AnkiDroid and try again.</string>
+    <string name="anki_fetch_connect_ankiconnect_failed">Unable to connect to AnkiConnect. Check the URL and try again.</string>
+    <string name="anki_fetch_ankiconnect_provider_failure">AnkiConnect did not respond while fetching decks and note types.</string>
+    <string name="anki_fetch_no_ankidroid_decks">No AnkiDroid decks were found.</string>
+    <string name="anki_fetch_no_ankiconnect_decks">No AnkiConnect decks were found.</string>
+    <string name="anki_fetch_no_ankidroid_note_types">No AnkiDroid note types were found.</string>
+    <string name="anki_fetch_no_ankiconnect_note_types">No AnkiConnect note types were found.</string>
+    <string name="anki_connect_invalid_url">Invalid AnkiConnect URL.</string>
+    <string name="diagnostics_saved">Diagnostics saved.</string>
+    <string name="diagnostics_save_failed">Unable to save diagnostics.</string>
+    <string name="diagnostics_save">Save Diagnostics</string>
+    <string name="diagnostics_share">Share Diagnostics</string>
+    <string name="diagnostics_share_subject">Hoshi diagnostics</string>
+    <string name="about_version_format">Version %1$s (%2$d)</string>
+    <string name="about_github_body">If you like this app, consider starring the project on GitHub.</string>
+    <string name="about_storage_cleanup">Storage Cleanup</string>
+    <string name="about_storage_cleanup_confirm_title">Clean Up Storage</string>
+    <string name="about_storage_cleanup_confirm_message_format">Delete %1$s of cache and leftover files? This cannot be undone.</string>
+    <string name="about_storage_cleanup_failed">Unable to clean up storage.</string>
+    <string name="about_storage_scan_failed">Unable to scan storage.</string>
+    <string name="about_storage_cleanup_scan_hint">Scan for interrupted imports, restore leftovers, orphaned audio, and media cache.</string>
+    <string name="about_storage_scanning">Scanning app storage...</string>
+    <string name="about_storage_cleaning">Cleaning selected files...</string>
+    <string name="about_storage_cleanable_format">%1$s can be cleaned across %2$d categories.</string>
+    <string name="about_storage_no_leftovers">No cleanable app storage leftovers were found.</string>
+    <string name="about_storage_category_format">%1$s: %2$s (%3$s)</string>
+    <string name="about_storage_category_anki_media_cache">Anki media cache</string>
+    <string name="about_storage_category_epub_import_residue">Interrupted EPUB imports</string>
+    <string name="about_storage_category_backup_restore_residue">Interrupted backup restores</string>
+    <string name="about_storage_category_dictionary_import_residue">Interrupted dictionary imports</string>
+    <string name="about_storage_category_local_audio_import_residue">Interrupted local audio import</string>
+    <string name="about_storage_category_orphan_sasayaki_audio">Unlinked Sasayaki audio</string>
+    <string name="about_clean_up">Clean Up</string>
+    <plurals name="about_item_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
+    <string name="about_updates" comment="About screen section label for app release update controls; intentionally matches the Dictionary update section label.">Updates</string>
+    <string name="about_check_updates">Check for Updates</string>
+    <string name="about_update_check_failed">Failed to check for updates.</string>
+    <string name="about_update_download_failed">Failed to download update.</string>
+    <string name="about_update_available_format">Update %1$s is available.</string>
+    <string name="about_update_skipped_format">Update %1$s has been skipped.</string>
+    <string name="about_update_downloading">An update is downloading.</string>
+    <string name="about_update_downloaded_format" comment="About update status, intentionally matching downloaded update prompt message.">Update %1$s has been downloaded.</string>
+    <string name="about_update_last_download_failed">The last update download failed.</string>
+    <string name="about_update_check_github">Check GitHub Releases for a newer Hoshi Reader APK.</string>
+    <string name="about_update_checking_github">Checking GitHub Releases...</string>
+    <string name="about_update_latest">You are running the latest version.</string>
+    <string name="about_update_no_matching_apk">A newer release was found, but it does not include a single matching APK.</string>
+    <string name="about_update_downloading_format">Downloading update %1$s.</string>
+    <string name="about_update_already_downloading_format">Update %1$s is already downloading.</string>
+    <string name="about_update_already_downloaded_format">Update %1$s has already been downloaded.</string>
+    <string name="update_downloading_notification">Downloading update</string>
+    <string name="sasayaki_title">Sasayaki</string>
+    <string name="sasayaki_pause">Pause Sasayaki</string>
+    <string name="sasayaki_play">Play Sasayaki</string>
+    <string name="sasayaki_rewind">Sasayaki Rewind</string>
+    <string name="sasayaki_fast_forward">Sasayaki Fast-forward</string>
+    <string name="sasayaki_replay_cue">Replay Sasayaki Cue</string>
+    <string name="sasayaki_play_from_cue">Play From Sasayaki Cue</string>
+    <string name="sasayaki_import_audiobook_failed">Unable to import audiobook.</string>
+    <string name="sasayaki_previous_cue">Previous Cue</string>
+    <string name="sasayaki_next_cue">Next Cue</string>
+    <string name="sasayaki_copy_audiobook_to_storage">Copy Audiobook to App Storage</string>
+    <string name="sasayaki_copy_audiobook_to_storage_help">Keep a private copy instead of linking to the selected external media file</string>
+    <string name="sasayaki_delay">Delay</string>
+    <string name="sasayaki_speed" comment="Sasayaki setting label, intentionally matching the statistics speed metric noun.">Speed</string>
+    <string name="sasayaki_reader_controls">Reader Controls</string>
+    <string name="sasayaki_show_bottom_playback_controls">Pin Playback Controls to Safe Area</string>
+    <string name="sasayaki_show_bottom_playback_controls_help">Show rewind, play or pause, and fast-forward controls in the bottom safe area.</string>
+    <string name="sasayaki_skip_action">Skip Action</string>
+    <string name="sasayaki_reverse_vertical_skip_buttons">Reverse in Vertical</string>
+    <string name="sasayaki_reverse_vertical_skip_buttons_help">In vertical writing, swap only the bottom reader skip button actions.</string>
+    <string name="sasayaki_playback">Playback</string>
+    <string name="sasayaki_light_theme">Light Theme</string>
+    <string name="sasayaki_dark_theme">Dark Theme</string>
+    <string name="sasayaki_auto_scroll">Auto-Scroll</string>
+    <string name="sasayaki_image_hold">Image Hold</string>
+    <string name="sasayaki_image_hold_help">Pause on illustrated pages during Sasayaki auto-scroll. Set to 0s to skip image holds.</string>
+    <string name="sasayaki_image_hold_off" comment="Sasayaki image hold slider value for zero seconds; intentionally matches other off labels.">Off</string>
+    <string name="sasayaki_seconds_decimal_format">%1$.1fs</string>
+    <string name="sasayaki_auto_pause_on_lookup">Auto-Pause on Lookup</string>
+    <string name="sasayaki_importing_audio">Importing audio...</string>
+    <string name="sasayaki_tab_resources">Resources</string>
+    <string name="sasayaki_tab_chapters" comment="Sasayaki audiobook chapter-list tab label; intentionally matches the Reader chapters label.">Chapters</string>
+    <string name="sasayaki_tab_settings" comment="Sasayaki sheet tab label, intentionally matching settings page titles.">Settings</string>
+    <string name="sasayaki_audiobook_resource">Audiobook</string>
+    <string name="sasayaki_audiobook_cover">Audiobook cover</string>
+    <string name="sasayaki_remove_audio">Remove</string>
+    <string name="sasayaki_storage_copied">Copied to app storage. The original audiobook file can be deleted.</string>
+    <string name="sasayaki_storage_linked">Linked to the external audiobook file. Keep the original file available.</string>
+    <string name="sasayaki_storage_select_audio">Select a .mp3, .m4b, .m4a, or .opus audiobook</string>
+    <string name="sasayaki_export_srt">Export SRT</string>
+    <string name="sasayaki_srt_saved">SRT file saved.</string>
+    <string name="sasayaki_srt_export_failed">Could not export subtitles. Please try again.</string>
+    <string name="sasayaki_current_match">Current Match</string>
+    <string name="sasayaki_no_subtitle_match">No match</string>
+    <string name="sasayaki_no_chapters">No chapters found in this audiobook.</string>
+    <string name="sasayaki_unknown_chapter">Chapter</string>
+    <string name="sasayaki_current_chapter">Current chapter</string>
+    <string name="sasayaki_skip_cue">1 sentence</string>
+    <string name="sasayaki_skip_seconds_format">%1$d seconds</string>
+    <string name="sasayaki_settings_description">Open the Reader Sasayaki menu to load a .mp3, .m4b, .m4a, or .opus audiobook. In Resources, match an .srt subtitle file or transcribe Japanese audio on this device.</string>
+    <string name="sasayaki_select_srt_file">Select an .srt subtitle file.</string>
+    <string name="sasayaki_selected_srt">Selected SRT</string>
+    <string name="sasayaki_open_srt_failed">Unable to open selected SRT.</string>
+    <string name="sasayaki_match_failed">Failed to match Sasayaki subtitles.</string>
+    <string name="sasayaki_file">File</string>
+    <string name="sasayaki_no_file_selected">No file selected</string>
+    <string name="sasayaki_matching">Matching...</string>
+    <string name="settings_book_cover_wallpaper">Book Cover Lock Screen</string>
+    <string name="settings_book_cover_wallpaper_subtitle">Show the current book cover when the device is locked or sleeping</string>
+    <string name="book_cover_wallpaper_lock_screen">Update lock screen wallpaper</string>
+    <string name="book_cover_wallpaper_lock_screen_summary">Set the current book cover as the Android lock screen wallpaper whenever a book opens. This may not work on some e-ink devices.</string>
+    <string name="book_cover_wallpaper_not_supported">Lock screen wallpapers are not supported on this device.</string>
+    <string name="book_cover_wallpaper_not_allowed">Device policy does not allow this app to change the wallpaper.</string>
+    <string name="book_cover_wallpaper_ireader">Update iReader book cover screen saver</string>
+    <string name="book_cover_wallpaper_ireader_summary">Update iReader’s built-in Book Cover screen saver whenever a book opens.</string>
+    <string name="book_cover_wallpaper_ireader_select_system_option">First open any book in the built-in iReader app. Then select Book Cover in the device’s screen saver settings, tap Apply, and return to Hoshi.</string>
+    <string name="book_cover_wallpaper_ireader_not_supported">This private iReader screen saver integration is not available on this device or firmware.</string>
+    <string name="book_cover_wallpaper_ireader_not_selected_error">Couldn’t update the iReader screen saver. Open any book in the built-in iReader app, then select Book Cover in the device’s screen saver settings and tap Apply.</string>
+    <string name="book_cover_wallpaper_vendor_integrations">E-Ink Device Integrations</string>
+    <string name="book_cover_wallpaper_vendor_integrations_summary">Options tailored to selected E-Ink device manufacturers. More integrations may be added here.</string>
+    <string name="book_cover_wallpaper_export">Export fixed cover image</string>
+    <string name="book_cover_wallpaper_export_summary">Overwrite one PNG file whenever a book opens. Select that file in your e-reader’s sleep screen settings.</string>
+    <string name="book_cover_wallpaper_export_file">Export file</string>
+    <string name="book_cover_wallpaper_export_file_none">No cover file selected</string>
+    <string name="book_cover_wallpaper_export_file_failed">The selected file could not be authorized. Choose another file.</string>
+    <string name="book_cover_wallpaper_change_file">Change file</string>
+    <string name="book_cover_wallpaper_publish_failed">The book opened, but its current cover could not be published.</string>
+    <string name="book_cover_scale_mode">Cover scaling</string>
+    <string name="book_cover_scale_fit">Fit</string>
+    <string name="book_cover_scale_fit_summary">Show the complete cover and fill unused space with white.</string>
+    <string name="book_cover_scale_fill">Fill</string>
+    <string name="book_cover_scale_fill_summary">Fill the screen while preserving proportions, cropping overflow.</string>
+    <string name="book_cover_scale_stretch">Stretch</string>
+    <string name="book_cover_scale_stretch_summary">Fill the screen without preserving the cover’s proportions.</string>
+    <string name="statistics_sync_heading" comment="Statistics settings section heading, intentionally matching the bookshelf Sync action.">Sync</string>
+    <string name="statistics_archive_heading">Archive</string>
+    <string name="statistics_clear_archive">Clear Archive</string>
+    <string name="statistics_clear_archive_confirmation">Delete statistics for %1$d archived books? Statistics for books in your library will be kept.</string>
+    <plurals name="statistics_archived_book_count">
+        <item quantity="one">%1$d book</item>
+        <item quantity="other">%1$d books</item>
+    </plurals>
+    <string name="statistics_operation_failed">Could not update or load statistics. Please try again.</string>
+    <string name="statistics_book_unavailable">Statistics for this book are no longer available.</string>
+    <string name="statistics_delete_all">Delete All Statistics</string>
+    <string name="statistics_delete_all_confirmation">Delete all local statistics for this book? Merging with synced statistics may restore deleted records.</string>
+    <string name="statistics_edit_hours">Hours</string>
+    <string name="statistics_edit_minutes">Minutes</string>
+    <string name="statistics_range_all">All</string>
+    <string name="statistics_average_change_week_format">%1$s%% from previous week</string>
+    <string name="statistics_average_change_month_format">%1$s%% from previous month</string>
+    <string name="statistics_average_change_year_format">%1$s%% from previous year</string>
+    <string name="statistics_current_streak">Current streak</string>
+    <string name="statistics_longest_streak">Longest streak</string>
+    <string name="statistics_best_day">Best day</string>
+    <string name="statistics_date_interval_format">%1$s – %2$s</string>
+    <string name="bookshelf_delete_failed">Could not delete the book or save its statistics archive. The book has been kept.</string>
+    <plurals name="statistics_history_reading_days">
+        <item quantity="one">of %1$d day read</item>
+        <item quantity="other">of %1$d days read</item>
+    </plurals>
+    <string name="statistics_goal_clock_format">%1$d:%2$02d</string>
+    <string name="statistics_goal_characters_link_format">/ %1$s character goal</string>
+    <string name="statistics_goal_minutes_link_format">/ %1$d minute goal</string>
+    <string name="statistics_history_short_date_pattern">MMM d</string>
+    <string name="statistics_history_since_format">since %1$s</string>
+    <string name="statistics_reading_time">Reading Time</string>
+    <string name="statistics_books" comment="Statistics book list heading, intentionally matching the main Books tab and backup section.">Books</string>
+    <string name="statistics_total_time">Total Time</string>
+    <string name="statistics_chart_average">avg</string>
+    <string name="statistics_chart_hours_format">%1$sh</string>
+    <string name="statistics_show_more_books">Show More</string>
+    <string name="statistics_heatmap_month_year_pattern">yyyy/M</string>
+    <string name="statistics_period_daily_average_format">%1$s Daily Average</string>
+    <string name="statistics_period_monthly_average_format">%1$s Monthly Average</string>
+    <string name="statistics_range_all_time" comment="Dashboard period caption, independent of the Reader statistics summary.">All Time</string>
+    <string name="statistics_heatmap_less">Less</string>
+    <string name="statistics_heatmap_more" comment="Upper endpoint of the reading intensity scale, distinct from the More action.">More</string>
+    <string name="statistics_goal_picker_title">Goal</string>
+    <string name="statistics_goal_characters_per_day">characters per day</string>
+    <string name="statistics_goal_minutes_per_day">minutes per day</string>
+    <string name="statistics_goal_save_failed">Could not save the goal. Please try again.</string>
+    <string name="statistics_days_heading">Days</string>
+    <string name="statistics_chart_weekday_pattern">EEEEE</string>
+    <string name="statistics_chart_day_pattern">d</string>
+    <string name="statistics_chart_month_pattern">MMMMM</string>
+    <string name="statistics_chart_month_year_pattern">MMM yy</string>
+    <string name="display_settings_load_failed">Could not load display and reading settings. Please try again.</string>
+    <string name="display_settings_save_failed">Could not save the settings. Your previous settings have been kept.</string>
+    <string name="display_settings_auto_switch">Automatically Switch with System</string>
+    <string name="display_settings_light_palette">Light Palette</string>
+    <string name="display_settings_dark_palette">Dark Palette</string>
+    <string name="display_settings_palette_dark_sepia">Dark Sepia</string>
+    <string name="display_settings_custom_light_palette">Custom Light</string>
+    <string name="display_settings_custom_dark_palette">Custom Dark</string>
+    <string name="display_settings_custom_light_explanation">Uses a light interface and dictionary popups with black text on white. Reading colors are set below.</string>
+    <string name="display_settings_custom_dark_explanation">Uses a dark interface and dictionary popups with white text on black. Reading colors are set below.</string>
+    <string name="display_settings_palette_preview_title">Reading preview</string>
+    <string name="display_settings_palette_preview_info">Secondary information</string>
+    <string name="display_settings_accent">Accent Color</string>
+    <string name="display_settings_accent_system">System Default</string>
+    <string name="display_settings_accent_purple">Purple</string>
+    <string name="display_settings_accent_blue" comment="Interface accent preset name; distinct from RGB editor channel labels.">Blue</string>
+    <string name="display_settings_accent_teal">Teal</string>
+    <string name="display_settings_accent_green" comment="Interface accent preset name; distinct from RGB editor channel labels.">Green</string>
+    <string name="display_settings_accent_yellow">Yellow</string>
+    <string name="display_settings_accent_orange">Orange</string>
+    <string name="display_settings_accent_red" comment="Interface accent preset name; distinct from RGB editor channel labels.">Red</string>
+    <string name="display_settings_accent_pink">Pink</string>
+    <string name="display_settings_custom_accent">Custom Accent Color</string>
+    <string name="display_settings_accent_hex">RGB hex color</string>
+    <string name="display_settings_accent_hex_invalid">Enter exactly six hexadecimal digits.</string>
+    <string name="display_settings_accent_preview">Control preview</string>
+    <string name="display_settings_accent_preview_action">Button</string>
+    <string name="display_settings_eink_mode">E-ink Optimization</string>
+    <string name="display_settings_eink_appearance">E-ink Appearance</string>
+    <string name="display_settings_eink_explanation">E-ink optimization uses a black-and-white palette. Turning it off restores your saved palette and accent color.</string>
+    <string name="reader_settings_profile_title">Appearance · %1$s</string>
+    <string name="dictionary_frequency_sort_order">Sort order</string>
+    <string name="dictionary_frequency_dictionary">Frequency dictionary</string>
+    <string name="dictionary_frequency_auto" comment="Automatic dictionary lookup frequency ordering.">Auto</string>
+    <string name="dictionary_frequency_ascending">Ascending</string>
+    <string name="dictionary_frequency_descending">Descending</string>
+    <string name="dictionary_frequency_disabled">Disabled</string>
+    <string name="dictionary_import_file_error_format">%1$s: %2$s</string>
+    <string name="dictionary_import_native_error_format">Dictionary importer: %1$s</string>
+    <string name="dictionary_import_file_access_error">Cannot access the dictionary file.</string>
+    <string name="dictionary_import_archive_error">The dictionary archive is invalid or damaged.</string>
+    <string name="dictionary_import_index_error">The dictionary index is missing or invalid.</string>
+    <string name="dictionary_import_contents_error">No supported dictionary entries were found.</string>
+    <string name="dictionary_import_io_error">Could not read or save the dictionary files.</string>
+    <string name="audio_source_jpod101" translatable="false">JapanesePod101</string>
+    <string name="audio_source_language_pod101" translatable="false">LanguagePod101</string>
+    <string name="audio_source_jisho" translatable="false">Jisho</string>
+    <string name="sasayaki_match_source_subtitles">Subtitles</string>
+    <string name="sasayaki_transcription">Transcription</string>
+    <string name="sasayaki_transcription_description">Transcribe Japanese audio and match it to the book.</string>
+    <string name="sasayaki_transcription_select_audio">Import an audiobook using the Audiobook section above.</string>
+    <string name="sasayaki_transcription_start">Transcribe</string>
+    <string name="sasayaki_transcription_resume">Resume</string>
+    <string name="sasayaki_transcription_realign">Match Again</string>
+    <string name="sasayaki_transcription_pause">Pause</string>
+    <string name="sasayaki_transcription_preparing">Preparing transcription…</string>
+    <string name="sasayaki_transcription_downloading">Downloading transcription files… %1$d%%</string>
+    <string name="sasayaki_transcription_progress">Transcribing and matching…</string>
+    <string name="sasayaki_transcription_paused">Transcription paused</string>
+    <string name="sasayaki_transcription_complete">Transcription complete</string>
+    <string name="sasayaki_transcription_awaiting_download">Waiting for download confirmation</string>
+    <string name="sasayaki_transcription_download_title">Download transcription files?</string>
+    <string name="sasayaki_transcription_download_message">Transcription needs about %1$d MiB of additional files (speech model and processing components). Downloaded files can be reused offline. Your audio stays on this device.</string>
+    <string name="sasayaki_transcription_download_action">Download and transcribe</string>
+    <string name="sasayaki_transcription_saved_progress">Transcribed %1$s / %2$s</string>
+    <string name="sasayaki_transcription_remaining">About %1$d min left</string>
+    <string name="sasayaki_transcription_aligning">Aligning with book…</string>
+    <string name="sasayaki_transcription_pausing">Saving progress…</string>
+    <string name="sasayaki_transcription_clear">Clear Transcription</string>
+    <string name="sasayaki_transcription_clear_confirmation">Clear transcription?</string>
+    <string name="sasayaki_transcription_clear_message">Only transcription data will be cleared. The current match will be kept.</string>
+    <string name="sasayaki_transcription_error_audio">Couldn’t read this audio. Check that the file is complete, accessible, and in a supported format, then try again.</string>
+    <string name="sasayaki_transcription_error_resources">Couldn’t download or verify transcription files. Check your connection and available storage, then try again.</string>
+    <string name="sasayaki_transcription_error_recognition">Japanese speech recognition couldn’t start or complete. Restart the app and try again; if it repeats, switch to Lightweight mode.</string>
+    <string name="sasayaki_transcription_error_match">Couldn’t match the transcription to this book. Check that the book opens correctly and matches this audio.</string>
+    <string name="sasayaki_transcription_error_storage">Couldn’t save transcription progress. Check available storage and that the book is still available.</string>
+    <string name="sasayaki_transcription_busy">Another book is being transcribed.</string>
+    <string name="about_ffmpeg_license" translatable="false">FFmpeg 9.0.2 · LGPL 2.1+</string>
+    <string name="about_ffmpeg_source">FFmpeg source code</string>
+    <string name="about_transcription_license">Transcription component licenses</string>
+    <string name="sasayaki_transcription_speed">Transcription speed</string>
+    <string name="sasayaki_transcription_light">Lightweight</string>
+    <string name="sasayaki_transcription_balanced">Balanced</string>
+    <string name="sasayaki_transcription_fast">Fast</string>
+    <string name="sasayaki_transcription_light_description">Uses fewer resources, with slower transcription.</string>
+    <string name="sasayaki_transcription_balanced_description">Balances transcription speed and everyday use.</string>
+    <string name="sasayaki_transcription_fast_description">Faster transcription; may generate more heat.</string>
+    <string name="study_title">AI study notebook</string>
+    <string name="study_test_ai">Test AI connection (uses API)</string>
+    <string name="study_ai_connected">The AI endpoint returned a test explanation successfully.</string>
+    <string name="study_test_mail">Send connection test to recipient</string>
+    <string name="study_test_mail_subject">Hoshi Study: email connection test</string>
+    <string name="study_test_mail_body">Your Hoshi Study email connection is working. This test contains no reading notes.</string>
+    <string name="study_notes">Notes</string>
+    <string name="study_review">Review</string>
+    <string name="study_settings">Setup</string>
+    <string name="study_working">Working… Please wait.</string>
+    <string name="study_saved">Settings saved securely on this device.</string>
+    <string name="study_empty">No study notes yet. Select a passage in a book and choose AI explanation.</string>
+    <string name="study_no_pending">There are no unsent notes. You can still generate a review.</string>
+    <string name="study_invalid_settings">Check the HTTPS endpoint, model, email addresses and SMTP credentials.</string>
+    <string name="study_configuration_error">Check your API key, model access, account balance and SMTP authorization code.</string>
+    <string name="study_network_error">The operation could not finish. Check the network and settings, then try again. Your notes remain saved.</string>
+    <string name="study_mail_sent">The mail server accepted your review. Check your inbox and spam folder.</string>
+    <string name="study_notes_help">Long-press book text, drag the selection handles over a whole sentence, then tap AI explanation. Successful word lookups are also saved.</string>
+    <string name="study_pending">Awaiting email</string>
+    <string name="study_emailed">Included in an emailed review</string>
+    <string name="study_review_help">Select one or more notes to generate explanations and exercises, then send them together in one email. You can resend previously emailed notes. All answers appear in a separate section at the end. AI may incur charges.</string>
+    <string name="study_generate_review">Generate review and exercises</string>
+    <string name="study_share">Share review</string>
+    <string name="study_privacy">Selected passages are sent only to the AI HTTPS endpoint you configure. Enabling email also sends pending study notes to that AI endpoint and your configured mail server. Keys and email authorization codes are encrypted locally and excluded from backup. ChatGPT subscriptions do not include API usage.</string>
+    <string name="study_ai_section">AI connection</string>
+    <string name="study_endpoint">Full HTTPS chat/completions URL</string>
+    <string name="study_model">Model ID</string>
+    <string name="study_api_key">API key</string>
+    <string name="study_mail_section">Daily review email</string>
+    <string name="study_smtp_help">Use SMTP with implicit TLS on port 465 and AUTH LOGIN, for example smtp.qq.com, smtp.163.com or smtp.gmail.com. Enter an application password or authorization code, not your normal account password.</string>
+    <string name="study_smtp_host">SMTP hostname (TLS port 465)</string>
+    <string name="study_smtp_user">Sender email / SMTP username</string>
+    <string name="study_smtp_password">Email app password / authorization code</string>
+    <string name="study_recipient">Recipient email</string>
+    <string name="study_daily_mail">Automatically email reviews after 21:00 Japan time</string>
+    <string name="study_mail_delay">Runs on this device. Sleep, no network, force-stop and battery restrictions may delay delivery until the device can run again. Keep Wi-Fi available and allow background work. No email is sent on days with no pending notes.</string>
+    <string name="study_save">Save settings</string>
+    <string name="study_send_now">Generate and email unsent notes now</string>
+    <string name="study_dictionary_attribution">Dictionaries are not bundled. Import Yomitan dictionaries that you are permitted to use from dictionary settings.</string>
+    <string name="study_dictionary_installing">Preparing your study notebook.</string>
+    <string name="study_dictionary_ready">Study notebook is ready. Import a dictionary in dictionary settings to enable offline lookup.</string>
+    <string name="study_dictionary_failed">Could not prepare the study notebook. Check free storage and retry.</string>
+    <string name="study_retry_dictionary">Retry dictionary setup</string>
+    <string name="study_explain">AI explanation</string>
+    <string name="study_explain_help">Save your API key in Settings → AI study notebook → Setup, then request a Chinese translation and grammar explanation.</string>
+    <string name="study_original_notes">Original study notes</string>
+    <string name="study_mail_subject">Hoshi: Japanese review and exercises</string>
+    <string name="study_select_notes">Select notes to include in one review email.</string>
+    <string name="study_selected_count">%1$d notes selected</string>
+    <string name="study_select_all">All notes</string>
+    <string name="study_select_pending">Unsent</string>
+    <string name="study_clear_selection">Clear note selection</string>
+    <string name="study_send_selected">Send selected notes in one email</string>
+    <string name="study_choose_email_notes">Choose notes for one email</string>
+    <string name="study_mail_to">Email to: %1$s</string>
+    <string name="study_review_group_format">Group %1$d (%2$d notes)</string>
+    <string name="study_review_answers">Answers and explanations</string>
+    <string name="study_review_format_error">AI returned an incomplete worksheet or an unrecognized answer section. The email was not sent; try generating a preview again.</string>
+    <string name="study_review_generation_error">Review generation failed before email delivery. Try fewer notes and check the AI connection, quota and network.</string>
+    <string name="study_mail_delivery_error">The worksheet was generated, but the mail server did not confirm acceptance. Check Gmail settings and connection before retrying.</string>
+    <string name="anki_mining_added">Added to Anki successfully.</string>
+    <string name="anki_mining_added_to_deck">Added to Anki deck: %1$s</string>
+    <string name="anki_mining_permission_required">Not added. Open Hoshi settings → Anki → Fetch decks and note types, and allow AnkiDroid database access.</string>
+    <string name="anki_mining_setup_required">Not added. Open Hoshi settings → Anki, fetch decks and note types, then choose a deck, note type and field mappings.</string>
+    <string name="anki_mining_failed">Anki did not confirm a new note. It may already exist or Anki may have rejected the fields. Check the target deck and note format.</string>
+</resources>

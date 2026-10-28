@@ -1,0 +1,879 @@
+package moe.antimony.hoshi.features.bookshelf
+
+import android.net.Uri
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import moe.antimony.hoshi.R
+import moe.antimony.hoshi.epub.BookEntry
+import moe.antimony.hoshi.epub.LegacyBookMigrationProgress
+import moe.antimony.hoshi.epub.BookSortOption
+import moe.antimony.hoshi.features.sync.isTransientDriveNetworkFailure
+import moe.antimony.hoshi.features.sync.StatisticsSyncMode
+import moe.antimony.hoshi.features.sync.SyncDirection
+import moe.antimony.hoshi.features.sync.SyncResult
+import moe.antimony.hoshi.ui.UiText
+
+internal data class BookImportItem(
+    val uri: Uri,
+    val displayName: String? = null,
+)
+
+internal data class PendingBookImport(
+    val importKey: String,
+    val displayName: String? = null,
+    val importOperation: suspend () -> String,
+)
+
+@HiltViewModel
+internal class BookshelfViewModel : ViewModel {
+    private val repository: BookshelfRepository
+    private val importGate: PendingImportGate<String>
+    private val injectedScope: CoroutineScope?
+    private val workScope: CoroutineScope
+        get() = injectedScope ?: viewModelScope
+
+    @Inject
+    constructor(repository: BookshelfRepository) : this(
+        repository = repository,
+        coroutineScope = null,
+        importGate = PendingImportGate(),
+        marker = Unit,
+    )
+
+    internal constructor(
+        repository: BookshelfRepository,
+        coroutineScope: CoroutineScope,
+        importGate: PendingImportGate<String> = PendingImportGate(),
+    ) : this(
+        repository = repository,
+        coroutineScope = coroutineScope,
+        importGate = importGate,
+        marker = Unit,
+    )
+
+    private constructor(
+        repository: BookshelfRepository,
+        coroutineScope: CoroutineScope?,
+        importGate: PendingImportGate<String>,
+        @Suppress("UNUSED_PARAMETER") marker: Unit,
+    ) : super() {
+        this.repository = repository
+        this.importGate = importGate
+        injectedScope = coroutineScope
+    }
+
+    private val _uiState = MutableStateFlow(BookshelfUiState())
+    val uiState: StateFlow<BookshelfUiState> = _uiState
+    private var openBookInFlight = false
+    private var reloadGeneration = 0
+    private var remoteLoadJob: Job? = null
+    private val remoteImportsInFlight = mutableSetOf<String>()
+    private val remoteDeletesInFlight = mutableSetOf<String>()
+
+    fun reloadBookEntries() {
+        reloadBookEntries(_uiState.value.sortOption)
+    }
+
+    fun refreshRemoteBooks() {
+        if (!_uiState.value.hasLoadedBooks) return
+        remoteLoadJob?.cancel()
+        val generation = reloadGeneration
+        val localEntries = _uiState.value.bookEntries
+        _uiState.update { it.copy(errorMessage = null) }
+        reloadRemoteBookEntries(localEntries, generation, suppressTransientNetworkErrors = false)
+    }
+
+    fun changeSort(sortOption: BookSortOption) {
+        workScope.launch {
+            repository.changeSort(sortOption)
+            _uiState.update {
+                it.copy(
+                    sortOption = sortOption,
+                    remoteBookEntries = it.remoteBookEntries.sortedRemoteBooks(sortOption),
+                )
+            }
+            reloadBookEntriesSync(sortOption)
+        }
+    }
+
+    fun openBook(entry: BookEntry) {
+        if (openBookInFlight) {
+            return
+        }
+        openBookInFlight = true
+        workScope.launch {
+            _uiState.update { it.copy(errorMessage = null) }
+            try {
+                val bookId = repository.openBook(entry)
+                _uiState.update { it.copy(openReaderBookId = bookId) }
+            } catch (error: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        errorMessage = error.localizedMessage?.let(UiText::Literal)
+                            ?: UiText.Resource(R.string.bookshelf_open_failed),
+                    )
+                }
+            } finally {
+                openBookInFlight = false
+            }
+        }
+    }
+
+    fun importBook(uri: Uri, displayName: String? = null) {
+        importBook(uri.toString(), displayName) {
+            repository.importBook(uri)
+        }
+    }
+
+    fun importBooks(imports: List<BookImportItem>) {
+        val pendingImports = imports.map { import ->
+            PendingBookImport(
+                importKey = import.uri.toString(),
+                displayName = import.displayName,
+            ) {
+                repository.importBook(import.uri)
+            }
+        }
+        importBooks(pendingImports)
+    }
+
+    internal fun importBook(
+        importKey: String,
+        displayName: String? = null,
+        importOperation: suspend () -> String,
+    ) {
+        if (!importGate.tryStart(importKey)) {
+            return
+        }
+        runLoading(
+            errorPrefix = UiText.Resource(R.string.bookshelf_import_failed),
+            preferErrorPrefix = true,
+            onComplete = { importGate.finish(importKey) },
+            blockingProgressMessage = displayName
+                ?.takeIf { it.isNotBlank() }
+                ?.let { UiText.Resource(R.string.bookshelf_importing_named_format, it) }
+                ?: UiText.Resource(R.string.bookshelf_importing_epub),
+            block = {
+                importOperation()
+                reloadBookEntriesSync()
+            },
+        )
+    }
+
+    internal fun importBooks(imports: List<PendingBookImport>) {
+        if (imports.isEmpty()) {
+            return
+        }
+        if (imports.size == 1) {
+            val import = imports.single()
+            importBook(import.importKey, import.displayName, import.importOperation)
+            return
+        }
+
+        val importKey = imports.joinToString(separator = "\n") { it.importKey }
+        if (!importGate.tryStart(importKey)) {
+            return
+        }
+
+        workScope.launch {
+            importBooksBatch(imports, importKey)
+        }
+    }
+
+    fun importBookFolderItems(importsProvider: suspend () -> List<BookImportItem>) {
+        importBookFolder {
+            importsProvider().map { import ->
+                PendingBookImport(
+                    importKey = import.uri.toString(),
+                    displayName = import.displayName,
+                ) {
+                    repository.importBook(import.uri)
+                }
+            }
+        }
+    }
+
+    internal fun importBookFolder(importsProvider: suspend () -> List<PendingBookImport>) {
+        workScope.launch {
+            _uiState.update {
+                it.copy(
+                    isLoading = true,
+                    blockingProgressMessage = UiText.Resource(R.string.bookshelf_scanning_folder),
+                    statusMessage = null,
+                    errorMessage = null,
+                )
+            }
+            try {
+                val imports = importsProvider()
+                if (imports.isEmpty()) {
+                    _uiState.update {
+                        it.copy(errorMessage = UiText.Resource(R.string.bookshelf_no_epub_files_found))
+                    }
+                    return@launch
+                }
+                if (imports.size == 1) {
+                    _uiState.update { it.copy(isLoading = false, blockingProgressMessage = null) }
+                    val import = imports.single()
+                    importBook(import.importKey, import.displayName, import.importOperation)
+                    return@launch
+                }
+                val importKey = imports.joinToString(separator = "\n") { it.importKey }
+                if (!importGate.tryStart(importKey)) {
+                    return@launch
+                }
+                importBooksBatch(imports, importKey)
+            } catch (error: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        errorMessage = error.localizedMessage?.let(UiText::Literal)
+                            ?: UiText.Resource(R.string.bookshelf_import_failed),
+                    )
+                }
+            } finally {
+                _uiState.update { it.copy(isLoading = false, blockingProgressMessage = null) }
+            }
+        }
+    }
+
+    private suspend fun importBooksBatch(imports: List<PendingBookImport>, importKey: String) {
+        val failed = mutableListOf<String>()
+        _uiState.update {
+            it.copy(
+                isLoading = true,
+                blockingProgressMessage = UiText.Resource(R.string.bookshelf_importing_progress_format, 1, imports.size),
+                errorMessage = null,
+            )
+        }
+        try {
+            imports.forEachIndexed { index, import ->
+                _uiState.update {
+                    it.copy(
+                        blockingProgressMessage = UiText.Resource(
+                            R.string.bookshelf_importing_progress_format,
+                            index + 1,
+                            imports.size,
+                        ),
+                    )
+                }
+                try {
+                    import.importOperation()
+                } catch (_: Throwable) {
+                    failed += import.failureDisplayName()
+                }
+            }
+            reloadBookEntriesSync()
+            if (failed.isNotEmpty()) {
+                _uiState.update {
+                    it.copy(
+                        errorMessage = UiText.Resource(
+                            R.string.bookshelf_import_failed_list_format,
+                            failed.joinToString(separator = "\n"),
+                        ),
+                    )
+                }
+            }
+        } catch (error: Throwable) {
+            _uiState.update {
+                it.copy(
+                    errorMessage = error.localizedMessage?.let(UiText::Literal)
+                        ?: UiText.Resource(R.string.bookshelf_import_failed),
+                )
+            }
+        } finally {
+            _uiState.update { it.copy(isLoading = false, blockingProgressMessage = null) }
+            importGate.finish(importKey)
+        }
+    }
+
+    fun deleteBook(entry: BookEntry) {
+        runLoading(errorPrefix = UiText.Resource(R.string.bookshelf_delete_failed), preferErrorPrefix = true) {
+            try {
+                repository.deleteBook(entry)
+            } finally {
+                reloadBookEntriesSync()
+            }
+        }
+    }
+
+    fun exportBook(entry: BookEntry, uri: Uri) {
+        runLoading(
+            errorPrefix = UiText.Resource(R.string.bookshelf_export_failed),
+            blockingProgressMessage = UiText.Resource(R.string.bookshelf_exporting_epub),
+            block = {
+                repository.exportBook(entry, uri)
+                _uiState.update { it.copy(statusMessage = UiText.Resource(R.string.bookshelf_exported_epub_format, entry.displayTitle)) }
+            },
+        )
+    }
+
+    fun importRemoteBook(
+        entry: RemoteBookEntry,
+        syncStats: Boolean,
+        syncAudioBook: Boolean,
+    ) {
+        if (entry.id in remoteDeletesInFlight) return
+        if (!remoteImportsInFlight.add(entry.id)) return
+        workScope.launch {
+            _uiState.update {
+                it.copy(
+                    statusMessage = null,
+                    errorMessage = null,
+                    remoteImportProgressById = it.remoteImportProgressById + (entry.id to 0.0),
+                    remoteBusyBookIds = it.remoteBusyBookIds + entry.id,
+                )
+            }
+            try {
+                repository.importRemoteBook(
+                    entry = entry,
+                    syncStats = syncStats,
+                    syncAudioBook = syncAudioBook,
+                ) { progress ->
+                    _uiState.update {
+                        it.copy(remoteImportProgressById = it.remoteImportProgressById + (entry.id to progress))
+                    }
+                }
+                removeRemoteBook(entry.id)
+                reloadBookEntriesSync()
+            } catch (error: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        errorMessage = UiText.Resource(R.string.bookshelf_remote_book_import_failed),
+                    )
+                }
+            } finally {
+                remoteImportsInFlight -= entry.id
+                _uiState.update {
+                    it.copy(
+                        remoteImportProgressById = it.remoteImportProgressById - entry.id,
+                        remoteBusyBookIds = it.remoteBusyBookIds - entry.id,
+                    )
+                }
+            }
+        }
+    }
+
+    fun deleteRemoteBook(entry: RemoteBookEntry) {
+        if (entry.id in remoteImportsInFlight) return
+        if (!remoteDeletesInFlight.add(entry.id)) return
+        workScope.launch {
+            _uiState.update {
+                it.copy(
+                    statusMessage = null,
+                    errorMessage = null,
+                    remoteBusyBookIds = it.remoteBusyBookIds + entry.id,
+                )
+            }
+            try {
+                repository.deleteRemoteBook(entry)
+                removeRemoteBook(entry.id)
+                reloadBookEntriesSync()
+            } catch (error: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        errorMessage = UiText.Resource(R.string.bookshelf_remote_book_delete_failed),
+                    )
+                }
+            } finally {
+                remoteDeletesInFlight -= entry.id
+                _uiState.update { it.copy(remoteBusyBookIds = it.remoteBusyBookIds - entry.id) }
+            }
+        }
+    }
+
+    fun deleteSelectedBooks() {
+        val selectedEntries = _uiState.value.bookEntries.filter { it.metadata.id in _uiState.value.selectedBookIds }
+        if (selectedEntries.isEmpty()) return
+        runLoading(errorPrefix = UiText.Resource(R.string.bookshelf_delete_failed), preferErrorPrefix = true) {
+            try {
+                repository.deleteBooks(selectedEntries)
+                clearSelection()
+            } finally {
+                reloadBookEntriesSync()
+            }
+        }
+    }
+
+    fun moveBook(entry: BookEntry, shelfName: String?) {
+        workScope.launch {
+            repository.moveBooks(setOf(entry.metadata.id), shelfName)
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun moveSelectedBooks(shelfName: String?) {
+        val selectedIds = _uiState.value.selectedBookIds
+        if (selectedIds.isEmpty()) return
+        workScope.launch {
+            repository.moveBooks(selectedIds, shelfName)
+            clearSelection()
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun createShelf(name: String) {
+        workScope.launch {
+            repository.createShelf(name)
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun beginShelfCreationMoveForSelectedBooks() {
+        val selectedIds = _uiState.value.selectedBookIds
+        if (selectedIds.isEmpty()) return
+        beginShelfCreationMove(selectedIds, clearSelectionOnSuccess = true)
+    }
+
+    fun beginShelfCreationMoveForBook(entry: BookEntry) {
+        beginShelfCreationMove(setOf(entry.metadata.id), clearSelectionOnSuccess = false)
+    }
+
+    fun updateShelfCreationMoveName(name: String) {
+        _uiState.update { state ->
+            if (state.shelfCreationMoveStatus is ShelfCreationMoveStatus.Submitting) {
+                state
+            } else {
+                state.copy(
+                    shelfCreationMoveDialog = state.shelfCreationMoveDialog?.copy(name = name),
+                    shelfCreationMoveStatus = ShelfCreationMoveStatus.Idle,
+                )
+            }
+        }
+    }
+
+    fun confirmShelfCreationMove() {
+        val dialog = _uiState.value.shelfCreationMoveDialog ?: return
+        createShelfAndMoveBooks(
+            name = dialog.name,
+            bookIds = dialog.bookIds,
+            clearSelectionOnSuccess = dialog.clearSelectionOnSuccess,
+        )
+    }
+
+    fun dismissShelfCreationMoveDialog() {
+        _uiState.update { state ->
+            if (state.shelfCreationMoveStatus is ShelfCreationMoveStatus.Submitting) {
+                state
+            } else {
+                state.copy(
+                    shelfCreationMoveDialog = null,
+                    shelfCreationMoveStatus = ShelfCreationMoveStatus.Idle,
+                )
+            }
+        }
+    }
+
+    fun consumeShelfCreationMoveStatus() {
+        _uiState.update { state ->
+            if (state.shelfCreationMoveStatus is ShelfCreationMoveStatus.Submitting) {
+                state
+            } else {
+                state.copy(shelfCreationMoveStatus = ShelfCreationMoveStatus.Idle)
+            }
+        }
+    }
+
+    fun deleteShelf(name: String) {
+        workScope.launch {
+            repository.deleteShelf(name)
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun renameShelf(oldName: String, newName: String) {
+        val trimmedName = newName.trim()
+        if (trimmedName.isEmpty()) return
+        workScope.launch {
+            repository.renameShelf(oldName, trimmedName)
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun moveShelf(fromIndex: Int, toIndex: Int) {
+        workScope.launch {
+            repository.moveShelf(fromIndex, toIndex)
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun markRead(entry: BookEntry) {
+        workScope.launch {
+            repository.markRead(entry)
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun renameBook(entry: BookEntry, title: String) {
+        workScope.launch {
+            repository.renameBook(entry, title.trim().takeIf { it.isNotEmpty() })
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun setBookProfile(entry: BookEntry, profileId: String?) {
+        workScope.launch {
+            repository.setBookProfile(entry, profileId)
+            reloadBookEntriesSync()
+        }
+    }
+
+    fun changeShowReading(showReading: Boolean) {
+        workScope.launch {
+            repository.changeShowReading(showReading)
+            _uiState.update {
+                it.copy(
+                    showReading = showReading,
+                    sections = bookshelfSections(
+                        entries = it.bookEntries,
+                        shelves = it.shelves,
+                        progressById = it.bookProgressById,
+                        showReading = showReading,
+                        sortOption = it.sortOption,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun changeHideCollapsedShelfThumbnails(hide: Boolean) {
+        _uiState.update { it.copy(hideCollapsedShelfThumbnails = hide) }
+        workScope.launch {
+            repository.changeHideCollapsedShelfThumbnails(hide)
+        }
+    }
+
+    fun changeCoverMode(coverMode: BookshelfCoverMode) {
+        _uiState.update { it.copy(coverMode = coverMode) }
+        workScope.launch {
+            repository.changeCoverMode(coverMode)
+        }
+    }
+
+    fun startSelecting() {
+        _uiState.update { it.copy(isSelecting = true, selectedBookIds = emptySet()) }
+    }
+
+    fun clearSelection() {
+        _uiState.update { it.copy(isSelecting = false, selectedBookIds = emptySet()) }
+    }
+
+    fun toggleSelectedBook(entry: BookEntry) {
+        _uiState.update { state ->
+            val id = entry.metadata.id
+            val selected = if (id in state.selectedBookIds) {
+                state.selectedBookIds - id
+            } else {
+                state.selectedBookIds + id
+            }
+            state.copy(selectedBookIds = selected)
+        }
+    }
+
+    fun setShelfExpanded(collapseKey: String, isExpanded: Boolean) {
+        _uiState.update { state ->
+            state.copy(shelfExpansionState = state.shelfExpansionState + (collapseKey to isExpanded))
+        }
+    }
+
+    fun rebuildLookupQuery() {
+        workScope.launch {
+            runCatching { repository.rebuildLookupQuery() }
+        }
+    }
+
+    private fun createShelfAndMoveBooks(
+        name: String,
+        bookIds: Set<String>,
+        clearSelectionOnSuccess: Boolean,
+    ) {
+        val trimmedName = name.trim()
+        if (trimmedName.isEmpty() || bookIds.isEmpty()) return
+        if (_uiState.value.shelfCreationMoveStatus is ShelfCreationMoveStatus.Submitting) return
+        _uiState.update { it.copy(shelfCreationMoveStatus = ShelfCreationMoveStatus.Submitting) }
+        workScope.launch {
+            val updatedShelves = try {
+                repository.createShelfAndMoveBooks(trimmedName, bookIds)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _uiState.update {
+                    it.copy(
+                        shelfCreationMoveStatus = ShelfCreationMoveStatus.Failed(
+                            UiText.Resource(R.string.bookshelf_create_shelf_failed),
+                        ),
+                    )
+                }
+                return@launch
+            }
+            if (updatedShelves == null) {
+                _uiState.update {
+                    it.copy(
+                        shelfCreationMoveStatus = ShelfCreationMoveStatus.Failed(
+                            UiText.Resource(R.string.bookshelf_shelf_name_exists),
+                        ),
+                    )
+                }
+                return@launch
+            }
+            _uiState.update { state ->
+                state.copy(
+                    shelves = updatedShelves,
+                    sections = bookshelfSections(
+                        entries = state.bookEntries,
+                        shelves = updatedShelves,
+                        progressById = state.bookProgressById,
+                        showReading = state.showReading,
+                        sortOption = state.sortOption,
+                    ),
+                    isSelecting = if (clearSelectionOnSuccess) false else state.isSelecting,
+                    selectedBookIds = if (clearSelectionOnSuccess) emptySet() else state.selectedBookIds,
+                    shelfExpansionState = state.shelfExpansionState + ("shelf:$trimmedName" to true),
+                    shelfCreationMoveDialog = null,
+                    shelfCreationMoveStatus = ShelfCreationMoveStatus.Succeeded(
+                        shelfName = trimmedName,
+                        bookCount = bookIds.size,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun beginShelfCreationMove(
+        bookIds: Set<String>,
+        clearSelectionOnSuccess: Boolean,
+    ) {
+        if (bookIds.isEmpty()) return
+        _uiState.update { state ->
+            if (state.shelfCreationMoveStatus is ShelfCreationMoveStatus.Submitting) {
+                state
+            } else {
+                state.copy(
+                    shelfCreationMoveDialog = ShelfCreationMoveDialogState(
+                        bookIds = bookIds,
+                        clearSelectionOnSuccess = clearSelectionOnSuccess,
+                    ),
+                    shelfCreationMoveStatus = ShelfCreationMoveStatus.Idle,
+                )
+            }
+        }
+    }
+
+    fun syncBook(
+        entry: BookEntry,
+        direction: SyncDirection?,
+        syncStats: Boolean,
+        statsSyncMode: StatisticsSyncMode,
+        syncAudioBook: Boolean,
+    ) {
+        runLoading(
+            errorPrefix = UiText.Resource(R.string.bookshelf_sync_failed),
+            blockingProgressMessage = UiText.Resource(R.string.bookshelf_syncing),
+            replaceShelfWithLoading = false,
+            block = {
+                val result = repository.syncBook(
+                    entry = entry,
+                    direction = direction,
+                    syncStats = syncStats,
+                    statsSyncMode = statsSyncMode,
+                    syncAudioBook = syncAudioBook,
+                )
+                if (result is SyncResult.Imported) {
+                    refreshBookProgress()
+                }
+                _uiState.update { it.copy(statusMessage = result.bookshelfMessage()) }
+            },
+        )
+    }
+
+    fun consumeOpenReaderEvent() {
+        _uiState.update { it.copy(openReaderBookId = null) }
+    }
+
+    fun consumeStatusMessage() {
+        _uiState.update { it.copy(statusMessage = null) }
+    }
+
+    fun consumeErrorMessage() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    private fun reloadBookEntries(sortOption: BookSortOption) {
+        workScope.launch {
+            reloadBookEntriesSync(sortOption)
+        }
+    }
+
+    private suspend fun reloadBookEntriesSync(sortOption: BookSortOption = _uiState.value.sortOption) {
+        val generation = ++reloadGeneration
+        remoteLoadJob?.cancel()
+        val firstResult = loadBookEntries(sortOption)
+        val result = if (firstResult.settings.sortOption != sortOption) {
+            loadBookEntries(firstResult.settings.sortOption)
+        } else {
+            firstResult
+        }
+        if (generation != reloadGeneration) return
+        _uiState.update {
+            val validSelectedIds = it.selectedBookIds.intersect(result.entries.mapTo(mutableSetOf()) { entry -> entry.metadata.id })
+            it.copy(
+                bookEntries = result.entries,
+                bookProgressById = result.progressById,
+                coverSourcesById = result.coverSourcesById,
+                shelves = result.shelves,
+                sections = bookshelfSections(
+                    entries = result.entries,
+                    shelves = result.shelves,
+                    progressById = result.progressById,
+                    showReading = result.settings.showReading,
+                    sortOption = result.settings.sortOption,
+                ),
+                sortOption = result.settings.sortOption,
+                remoteBookEntries = it.remoteBookEntries.sortedRemoteBooks(result.settings.sortOption),
+                showReading = result.settings.showReading,
+                coverMode = result.settings.coverMode,
+                hideCollapsedShelfThumbnails = result.settings.hideCollapsedShelfThumbnails,
+                selectedBookIds = validSelectedIds,
+                hasLoadedBooks = true,
+                isLoading = false,
+                blockingProgressMessage = null,
+                errorMessage = null,
+            )
+        }
+        reloadRemoteBookEntries(result.entries, generation, suppressTransientNetworkErrors = true)
+    }
+
+    private suspend fun loadBookEntries(sortOption: BookSortOption): BookshelfLoadResult =
+        repository.loadBooks(sortOption, ::showLegacyBookMigrationProgress)
+
+    private suspend fun refreshBookProgress() {
+        val refreshedProgressById = repository.loadBookProgress(_uiState.value.bookEntries)
+        _uiState.update {
+            val currentBookIds = it.bookEntries.mapTo(mutableSetOf()) { entry -> entry.metadata.id }
+            val progressById = (it.bookProgressById + refreshedProgressById)
+                .filterKeys(currentBookIds::contains)
+            it.copy(
+                bookProgressById = progressById,
+                sections = bookshelfSections(
+                    entries = it.bookEntries,
+                    shelves = it.shelves,
+                    progressById = progressById,
+                    showReading = it.showReading,
+                    sortOption = it.sortOption,
+                ),
+            )
+        }
+    }
+
+    private fun showLegacyBookMigrationProgress(progress: LegacyBookMigrationProgress) {
+        _uiState.update {
+            it.copy(
+                isLoading = true,
+                blockingProgressMessage = UiText.Resource(
+                    R.string.bookshelf_legacy_migration_progress_format,
+                    progress.current,
+                    progress.total,
+                ),
+                statusMessage = null,
+                errorMessage = null,
+            )
+        }
+    }
+
+    private fun reloadRemoteBookEntries(
+        localEntries: List<BookEntry>,
+        generation: Int,
+        suppressTransientNetworkErrors: Boolean,
+    ) {
+        remoteLoadJob = workScope.launch {
+            try {
+                val remoteResult = repository.loadRemoteBooks(localEntries)
+                if (generation != reloadGeneration) return@launch
+                _uiState.update {
+                    it.copy(
+                        remoteBookEntries = remoteResult.remoteEntries.sortedRemoteBooks(it.sortOption),
+                        remoteProgressById = remoteResult.remoteProgressById,
+                        remoteCoverSourcesById = remoteResult.remoteCoverSourcesById,
+                    )
+                }
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                if (generation != reloadGeneration) return@launch
+                if (suppressTransientNetworkErrors && error.isTransientDriveNetworkFailure()) return@launch
+                _uiState.update {
+                    it.copy(
+                        errorMessage = UiText.Resource(R.string.bookshelf_remote_books_load_failed),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun removeRemoteBook(remoteBookId: String) {
+        _uiState.update {
+            it.copy(
+                remoteBookEntries = it.remoteBookEntries.filterNot { remote -> remote.id == remoteBookId },
+                remoteProgressById = it.remoteProgressById - remoteBookId,
+                remoteImportProgressById = it.remoteImportProgressById - remoteBookId,
+                remoteBusyBookIds = it.remoteBusyBookIds - remoteBookId,
+                remoteCoverSourcesById = it.remoteCoverSourcesById - remoteBookId,
+            )
+        }
+    }
+
+    private fun runLoading(
+        errorPrefix: UiText,
+        preferErrorPrefix: Boolean = false,
+        onComplete: () -> Unit = {},
+        blockingProgressMessage: UiText? = null,
+        replaceShelfWithLoading: Boolean = true,
+        block: suspend () -> Unit,
+    ) {
+        workScope.launch {
+            _uiState.update {
+                it.copy(
+                    isLoading = replaceShelfWithLoading,
+                    blockingProgressMessage = blockingProgressMessage,
+                    statusMessage = null,
+                    errorMessage = null,
+                )
+            }
+            try {
+                block()
+            } catch (error: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        errorMessage = if (preferErrorPrefix) {
+                            errorPrefix
+                        } else {
+                            error.localizedMessage?.let(UiText::Literal) ?: errorPrefix
+                        },
+                    )
+                }
+            } finally {
+                _uiState.update { it.copy(isLoading = false, blockingProgressMessage = null) }
+                onComplete()
+            }
+        }
+    }
+
+}
+
+private fun PendingBookImport.failureDisplayName(): String =
+    displayName?.takeIf { it.isNotBlank() }
+        ?: importKey.substringAfterLast('/').takeIf { it.isNotBlank() }
+        ?: "EPUB"
+
+private fun SyncResult.bookshelfMessage(): UiText? =
+    when (this) {
+        is SyncResult.Exported -> UiText.Resource(R.string.bookshelf_synced_to_ttu_format, title, characterCount)
+        is SyncResult.Imported -> UiText.Resource(R.string.bookshelf_synced_from_ttu_format, title, characterCount)
+        is SyncResult.Synced -> UiText.Resource(R.string.bookshelf_already_synced_format, title)
+        SyncResult.Skipped -> null
+    }

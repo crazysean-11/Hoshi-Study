@@ -1,0 +1,734 @@
+package moe.antimony.hoshi.epub
+
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+
+class EpubBookParserTest {
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
+    @Test
+    fun parsesExtractedEpubUsingContainerManifestAndSpineLikePoc() {
+        val root = tempFolder.newFolder("book")
+        writeExtractedEpub(root)
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("Sample Book", book.title)
+        assertEquals(
+            listOf("OPS/text/chapter-2.xhtml", "OPS/text/chapter-1.xhtml"),
+            book.chapters.map { it.href },
+        )
+        assertEquals("chapter-2", book.chapters.first().id)
+        assertEquals("application/xhtml+xml", book.chapters.first().mediaType)
+        assertEquals("<html><body>Second</body></html>", book.chapters.first().html)
+        assertEquals("OPS/images/cover.jpg", book.coverHref)
+        assertArrayEquals("body {}".toByteArray(), book.readResource("/OPS/styles/book.css"))
+        assertEquals("text/css", book.mediaType("OPS/styles/book.css"))
+        assertEquals("image/jpeg", book.mediaType("OPS/images/cover.jpg"))
+    }
+
+    @Test
+    fun preservesSelfClosingExternalScriptsForDirectXhtmlLoading() {
+        val root = tempFolder.newFolder("self-closing-script-book")
+        writeExtractedEpub(
+            root = root,
+            firstChapterHtml = """
+                <html>
+                <head>
+                  <script type="text/javascript" src="../js/kobo.js"/>
+                </head>
+                <body><p>Visible text</p></body>
+                </html>
+            """.trimIndent(),
+        )
+
+        val chapter = EpubBookParser().parse(root).chapters.last()
+
+        assertEquals(
+            """
+            <html>
+            <head>
+              <script type="text/javascript" src="../js/kobo.js"/>
+            </head>
+            <body><p>Visible text</p></body>
+            </html>
+            """.trimIndent(),
+            chapter.html,
+        )
+    }
+
+    @Test
+    fun parsesGeneratedFixtureWithReadableBookInfoAndXhtmlScriptsPreserved() {
+        val root = tempFolder.newFolder("realistic-script-book")
+        writeExtractedEpub(
+            root = root,
+            title = "Script Fixture",
+            firstChapterHtml = """
+                <html>
+                <head>
+                  <script type="text/javascript" src="../js/kobo.js"/>
+                </head>
+                <body>
+                  <p>Alpha 123</p>
+                  <rt>ignored ruby</rt>
+                  <script>HiddenText</script>
+                </body>
+                </html>
+            """.trimIndent(),
+            secondChapterHtml = "<html><body><p>Second</p></body></html>",
+        )
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("Script Fixture", book.title)
+        assertEquals("OPS/images/cover.jpg", book.coverHref)
+        assertEquals(2, book.chapters.size)
+        assertEquals("OPS/text/chapter-2.xhtml", book.chapters.first().href)
+        assertEquals(14, book.bookInfo.characterCount)
+        assertEquals(true, book.chapters.any { chapter -> selfClosingScriptRegex.containsMatchIn(chapter.html) })
+        assertEquals("image/jpeg", book.mediaType(book.coverHref.orEmpty()))
+    }
+
+    @Test
+    fun parsesPackedEpubByExtractingToManagedCache() {
+        val archive = tempFolder.newFile("packed.epub")
+        val cacheRoot = tempFolder.newFolder("packed-cache")
+        writeMinimalEpubArchive(archive, title = "Packed Book")
+
+        val book = EpubBookParser().parsePacked(archive, cacheRoot)
+
+        assertEquals("Packed Book", book.title)
+        assertEquals(listOf("OPS/text/chapter-1.xhtml", "OPS/text/chapter-2.xhtml"), book.chapters.map { it.href })
+        assertArrayEquals("body {}".toByteArray(), book.readResource("OPS/styles/book.css"))
+        assertTrue(cacheRoot.walkTopDown().any { it.name == "container.xml" })
+    }
+
+    @Test
+    fun parsesPackageLanguageForProfileAutoSelection() {
+        val root = tempFolder.newFolder("english-book")
+        writeMinimalExtractedEpub(root, title = "English Book", language = "en-US")
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("en-US", book.language)
+    }
+
+    @Test
+    fun parsesAndTrimsFirstPackageAuthor() {
+        val root = tempFolder.newFolder("authored-book")
+        writeMinimalExtractedEpub(root, author = "  Jane Doe  ")
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("Jane Doe", book.author)
+    }
+
+    @Test
+    fun explicitCoverNamedManifestImageIsUsedWithoutCoverMetadata() {
+        val root = tempFolder.newFolder("named-cover-book")
+        writeMinimalExtractedEpub(
+            root = root,
+            coverId = "front-cover-art",
+            coverProperties = null,
+        )
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("OPS/images/cover.jpg", book.coverHref)
+    }
+
+    @Test
+    fun unrelatedFirstManifestImageIsNotUsedAsCover() {
+        val root = tempFolder.newFolder("illustration-only-book")
+        writeMinimalExtractedEpub(
+            root = root,
+            coverId = "chapter-illustration",
+            coverProperties = null,
+        )
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals(null, book.coverHref)
+    }
+
+    @Test
+    fun resolvesEpub3TocHrefsRelativeToNestedNavigationDocument() {
+        val root = tempFolder.newFolder("nested-epub3-navigation")
+        writeNestedEpub3NavigationFixture(root)
+        val cachedBookInfoWithoutFragmentOffsets = BookInfo(
+            characterCount = 29,
+            chapterInfo = mapOf(
+                "OEBPS/Text/p-002.xhtml" to BookInfo.ChapterInfo(
+                    spineIndex = 0,
+                    currentTotal = 0,
+                    chapterCount = 19,
+                ),
+                "OEBPS/Text/p-003.xhtml" to BookInfo.ChapterInfo(
+                    spineIndex = 1,
+                    currentTotal = 19,
+                    chapterCount = 10,
+                ),
+            ),
+            images = emptyList(),
+        )
+
+        val book = EpubBookParser().parse(
+            root,
+            cachedBookInfo = cachedBookInfoWithoutFragmentOffsets,
+        )
+
+        assertEquals(
+            listOf(
+                "OEBPS/Text/p-002.xhtml#toc-001",
+                "OEBPS/Text/p-003.xhtml#toc-002",
+            ),
+            book.toc.map { it.href },
+        )
+        assertEquals(listOf("Prologue", "Chapter One"), book.toc.map { it.label })
+        assertEquals(
+            6,
+            book.bookInfo.chapterInfo
+                .getValue("OEBPS/Text/p-002.xhtml")
+                .fragmentOffsets
+                ?.get("toc-001"),
+        )
+    }
+
+    @Test
+    fun resolvesEpub2TocHrefsRelativeToNestedNcxDocument() {
+        val root = tempFolder.newFolder("nested-epub2-ncx")
+        writeNestedEpub2NcxFixture(root)
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals(
+            listOf("OEBPS/Text/chapter.xhtml#part-1"),
+            book.toc.map { it.href },
+        )
+        assertEquals(
+            5,
+            book.bookInfo.chapterInfo
+                .getValue("OEBPS/Text/chapter.xhtml")
+                .fragmentOffsets
+                ?.get("part-1"),
+        )
+    }
+
+    @Test
+    fun parsesPackedEpubIntoStableCacheDirectoryForRepeatedReads() {
+        val archive = tempFolder.newFile("stable-packed.epub")
+        val cacheRoot = tempFolder.newFolder("stable-cache")
+        writeMinimalEpubArchive(archive, title = "Stable Packed Book")
+
+        val first = EpubBookParser().parsePacked(archive, cacheRoot)
+        val firstRoot = first.rootDirectory
+        val second = EpubBookParser().parsePacked(archive, cacheRoot)
+
+        assertEquals(firstRoot?.canonicalFile, second.rootDirectory?.canonicalFile)
+        assertEquals(1, cacheRoot.listFiles().orEmpty().count { it.isDirectory })
+    }
+
+    @Test
+    fun staleCachedBookInfoRegeneratesReaderFactsBeforeLaterReuse() {
+        val root = tempFolder.newFolder("stale-reader-facts")
+        writeMinimalExtractedEpub(
+            root = root,
+            firstChapterHtml = "<html><body><img src=\"../images/cover.jpg\"/><p>First</p></body></html>",
+        )
+        val stale = BookInfo(
+            characterCount = 11,
+            chapterInfo = mapOf(
+                "OPS/text/chapter-1.xhtml" to BookInfo.ChapterInfo(0, 0, 5),
+                "OPS/text/chapter-2.xhtml" to BookInfo.ChapterInfo(1, 5, 6),
+            ),
+        )
+        val parser = EpubBookParser()
+
+        val regenerated = parser.parse(root, cachedBookInfo = stale)
+        val reused = parser.parse(root, cachedBookInfo = regenerated.bookInfo)
+
+        assertEquals(listOf("OPS/images/cover.jpg"), regenerated.bookInfo.images)
+        assertTrue(regenerated.chapters.all { it.html.isNotEmpty() })
+        assertTrue(reused.chapters.all { it.html.isEmpty() })
+        assertEquals(regenerated.bookInfo, reused.bookInfo)
+    }
+
+    @Test
+    fun versionTwoFactsRebuildKoreanCountsAndRubyFragmentOffsetsBeforeReuse() {
+        val root = tempFolder.newFolder("korean-reader-facts")
+        writeNestedEpub3NavigationFixture(root)
+        root.resolve("OEBPS/Text/p-002.xhtml").writeText(
+            "<body>가𠮟<ruby>漢<rp>fallback</rp><rt>かん</rt><rp>주석</rp></ruby>" +
+                "<h1 id=\"toc-001\">한글</h1></body>",
+        )
+        root.resolve("OEBPS/Text/p-003.xhtml").writeText(
+            "<body>ㄱ<h1 id=\"toc-002\">ㆎA</h1></body>",
+        )
+        val stale = BookInfo(
+            characterCount = 11,
+            chapterInfo = mapOf(
+                "OEBPS/Text/p-002.xhtml" to BookInfo.ChapterInfo(0, 0, 10, mapOf("toc-001" to 10)),
+                "OEBPS/Text/p-003.xhtml" to BookInfo.ChapterInfo(1, 10, 1, mapOf("toc-002" to 0)),
+            ),
+            images = emptyList(),
+            readerFactsVersion = 2,
+        )
+        val parser = EpubBookParser()
+
+        val regenerated = parser.parse(root, cachedBookInfo = stale)
+        val reused = parser.parse(root, cachedBookInfo = regenerated.bookInfo)
+
+        assertEquals(8, regenerated.bookInfo.characterCount)
+        assertEquals(
+            BookInfo.ChapterInfo(0, 0, 5, mapOf("toc-001" to 3)),
+            regenerated.bookInfo.chapterInfo.getValue("OEBPS/Text/p-002.xhtml"),
+        )
+        assertEquals(
+            BookInfo.ChapterInfo(1, 5, 3, mapOf("toc-002" to 1)),
+            regenerated.bookInfo.chapterInfo.getValue("OEBPS/Text/p-003.xhtml"),
+        )
+        assertTrue(regenerated.chapters.all { it.html.isNotEmpty() })
+        assertTrue(reused.chapters.all { it.html.isEmpty() })
+        assertEquals(regenerated.bookInfo, reused.bookInfo)
+    }
+
+    @Test
+    fun parsesPackedEpubReextractsIncompleteCacheBeforeReusingBookInfo() {
+        val archive = tempFolder.newFile("incomplete-cache.epub")
+        val cacheRoot = tempFolder.newFolder("incomplete-cache")
+        writeMinimalEpubArchive(archive, title = "Incomplete Cache Book")
+        val parser = EpubBookParser()
+        val first = parser.parsePacked(archive, cacheRoot)
+        val extractedRoot = requireNotNull(first.rootDirectory)
+        val missingChapter = extractedRoot.resolve("OPS/text/chapter-2.xhtml")
+        assertTrue(missingChapter.delete())
+
+        val second = parser.parsePacked(archive, cacheRoot, cachedBookInfo = first.bookInfo)
+
+        assertTrue(missingChapter.isFile)
+        assertArrayEquals(
+            "<html><body><p>Second</p></body></html>".toByteArray(),
+            second.readResource("OPS/text/chapter-2.xhtml"),
+        )
+    }
+
+    @Test
+    fun parsesPackedEpubKeepsOtherExtractionRootsReadableLikeIosTempStorage() {
+        val firstArchive = tempFolder.newFile("first-packed.epub")
+        val secondArchive = tempFolder.newFile("second-packed.epub")
+        val cacheRoot = tempFolder.newFolder("single-working-cache")
+        writeMinimalEpubArchive(firstArchive, title = "First Packed Book")
+        writeMinimalEpubArchive(secondArchive, title = "Second Packed Book")
+
+        val first = EpubBookParser().parsePacked(firstArchive, cacheRoot)
+        val firstRoot = first.rootDirectory?.canonicalFile
+        val second = EpubBookParser().parsePacked(secondArchive, cacheRoot)
+        val secondRoot = second.rootDirectory?.canonicalFile
+
+        assertTrue(secondRoot?.isDirectory == true)
+        assertTrue(firstRoot?.isDirectory == true)
+        assertArrayEquals("body {}".toByteArray(), first.readResource("OPS/styles/book.css"))
+        assertEquals(
+            setOf(firstRoot, secondRoot),
+            cacheRoot.listFiles().orEmpty().filter { it.isDirectory }.map { it.canonicalFile }.toSet(),
+        )
+    }
+
+    @Test
+    fun metadataWithoutOptionalCoverStillResolvesCustomPackedFilename() {
+        val root = tempFolder.newFolder("renamed-book")
+        writeMinimalEpubArchive(root.resolve("original.epub"), title = "Packed Book")
+        root.resolve("metadata.json").writeText("""{"id":"book","title":"Packed Book","folder":"renamed-book","lastAccess":0,"epub":"original.epub"}""")
+        assertEquals("Packed Book", EpubBookParser().parse(root).title)
+    }
+
+    @Test
+    fun metadataEpubPathOutsideBookRootIsIgnored() {
+        val root = tempFolder.newFolder("book-root")
+        writeMinimalExtractedEpub(root, title = "Inside Book")
+        val outside = tempFolder.newFile("outside.epub")
+        writeMinimalEpubArchive(outside, title = "Outside Book")
+        root.resolve("metadata.json").writeText(
+            """
+            {
+              "id":"book",
+              "title":"Book",
+              "cover":null,
+              "folder":"book-root",
+              "lastAccess":0.0,
+              "epub":"../outside.epub"
+            }
+            """.trimIndent(),
+        )
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("Inside Book", book.title)
+    }
+
+    @Test
+    fun parsesGeneratedJapaneseEpubFixtureWithoutCrashing() {
+        val root = tempFolder.newFolder("same-dream-book")
+        writeSameDreamLikeExtractedEpub(root)
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("また、同じ夢を見ていた", book.title)
+        assertEquals(9, book.chapters.size)
+        assertEquals("item/xhtml/p-cover.xhtml", book.chapters.first().href)
+        assertEquals("item/image/cover.jpg", book.coverHref)
+    }
+
+    @Test
+    fun missingEpubTitleUsesProvidedImportFileNameFallback() {
+        val root = tempFolder.newFolder("missing-title-book")
+        writeExtractedEpub(root, title = " ")
+
+        val book = EpubBookParser().parse(root, fallbackTitle = "Source File")
+
+        assertEquals("Source File", book.title)
+    }
+
+    @Test
+    fun parsesKadokawaEpubWithSpineItemProperties() {
+        val root = tempFolder.newFolder("kadokawa-test5")
+        val archive = tempFolder.newFile("kadokawa-test5.epub")
+        writeKadokawaLikeEpubArchive(archive)
+        EpubArchiveExtractor().extract(archive, root)
+
+        val book = EpubBookParser().parse(root)
+
+        assertEquals("他校の氷姫を助けたら、お友達から始める事になりました", book.title)
+        assertEquals(16, book.chapters.size)
+        assertEquals("item/xhtml/p-cover.xhtml", book.chapters.first().href)
+        assertEquals("rendition:layout-pre-paginated", book.chapters.first().properties)
+        assertEquals("item/image/cover.jpg", book.coverHref)
+    }
+
+    @Test
+    fun epubArchiveExtractorRejectsEntriesOutsideDestination() {
+        val archive = tempFolder.newFile("unsafe.epub")
+        ZipOutputStream(archive.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("../outside.txt"))
+            zip.write("outside".toByteArray())
+            zip.closeEntry()
+        }
+        val root = tempFolder.newFolder("unsafe-root")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            EpubArchiveExtractor().extract(archive, root)
+        }
+    }
+
+    private fun writeExtractedEpub(
+        root: File,
+        title: String = "Sample Book",
+        firstChapterHtml: String = "<html><body>First</body></html>",
+        secondChapterHtml: String = "<html><body>Second</body></html>",
+    ) {
+        root.resolve("META-INF").mkdirs()
+        root.resolve("META-INF/container.xml").writeText(
+            """
+            <?xml version="1.0"?>
+            <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+              <rootfiles>
+                <rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/>
+              </rootfiles>
+            </container>
+            """.trimIndent(),
+        )
+
+        root.resolve("OPS/text").mkdirs()
+        root.resolve("OPS/styles").mkdirs()
+        root.resolve("OPS/images").mkdirs()
+        root.resolve("OPS/js").mkdirs()
+        root.resolve("OPS/text/chapter-1.xhtml").writeText(firstChapterHtml)
+        root.resolve("OPS/text/chapter-2.xhtml").writeText(secondChapterHtml)
+        root.resolve("OPS/styles/book.css").writeText("body {}")
+        root.resolve("OPS/images/cover.jpg").writeBytes(byteArrayOf(1, 2, 3))
+        root.resolve("OPS/js/kobo.js").writeText("")
+        root.resolve("OPS/package.opf").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                  <dc:title>$title</dc:title>
+              </metadata>
+              <manifest>
+                <item id="chapter-1" href="text/chapter-1.xhtml" media-type="application/xhtml+xml"/>
+                <item id="chapter-2" href="text/chapter-2.xhtml" media-type="application/xhtml+xml"/>
+                <item id="style" href="styles/book.css" media-type="text/css"/>
+                <item id="cover" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+                <item id="script" href="js/kobo.js" media-type="application/javascript"/>
+              </manifest>
+              <spine page-progression-direction="rtl">
+                <itemref idref="chapter-2"/>
+                <itemref idref="chapter-1"/>
+              </spine>
+            </package>
+            """.trimIndent(),
+        )
+    }
+
+    private fun writeNestedEpub3NavigationFixture(root: File) {
+        writeContainer(root, packagePath = "OEBPS/content.opf")
+        root.resolve("OEBPS/Text").mkdirs()
+        root.resolve("OEBPS/Misc").mkdirs()
+        root.resolve("OEBPS/Text/p-002.xhtml").writeText(
+            "<html><body><p>Before</p><h1 id=\"toc-001\">Prologue</h1><p>After</p></body></html>",
+        )
+        root.resolve("OEBPS/Text/p-003.xhtml").writeText(
+            "<html><body><h1 id=\"toc-002\">Chapter One</h1></body></html>",
+        )
+        root.resolve("OEBPS/Text/navigation-documents.xhtml").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+              <head><title>Contents</title></head>
+              <body>
+                <nav epub:type="toc">
+                  <ol>
+                    <li><a href="p-002.xhtml?edition=1#toc-001">Prologue</a></li>
+                    <li><a href="p-003.xhtml#toc-002">Chapter One</a></li>
+                  </ol>
+                </nav>
+              </body>
+            </html>
+            """.trimIndent(),
+        )
+        root.resolve("OEBPS/Misc/toc.ncx").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+              <docTitle><text>Broken fallback</text></docTitle>
+              <navMap>
+                <navPoint id="broken" playOrder="1">
+                  <navLabel><text>Broken NCX</text></navLabel>
+                  <content src="xhtml/p-cover.xhtml"/>
+                </navPoint>
+              </navMap>
+            </ncx>
+            """.trimIndent(),
+        )
+        root.resolve("OEBPS/content.opf").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>Nested EPUB 3 Navigation</dc:title>
+              </metadata>
+              <manifest>
+                <item id="p-002" href="Text/p-002.xhtml" media-type="application/xhtml+xml"/>
+                <item id="p-003" href="Text/p-003.xhtml" media-type="application/xhtml+xml"/>
+                <item id="nav" href="Text/navigation-documents.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                <item id="ncx" href="Misc/toc.ncx" media-type="application/x-dtbncx+xml"/>
+              </manifest>
+              <spine toc="ncx">
+                <itemref idref="p-002"/>
+                <itemref idref="p-003"/>
+              </spine>
+            </package>
+            """.trimIndent(),
+        )
+    }
+
+    private fun writeNestedEpub2NcxFixture(root: File) {
+        writeContainer(root, packagePath = "OEBPS/content.opf")
+        root.resolve("OEBPS/Text").mkdirs()
+        root.resolve("OEBPS/Misc").mkdirs()
+        root.resolve("OEBPS/Text/chapter.xhtml").writeText(
+            "<html><body><p>Intro</p><h1 id=\"part-1\">Part One</h1></body></html>",
+        )
+        root.resolve("OEBPS/Misc/toc.ncx").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+              <docTitle><text>Contents</text></docTitle>
+              <navMap>
+                <navPoint id="part-1" playOrder="1">
+                  <navLabel><text>Part One</text></navLabel>
+                  <content src="../Text/chapter.xhtml#part-1"/>
+                </navPoint>
+              </navMap>
+            </ncx>
+            """.trimIndent(),
+        )
+        root.resolve("OEBPS/content.opf").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>Nested EPUB 2 NCX</dc:title>
+              </metadata>
+              <manifest>
+                <item id="chapter" href="Text/chapter.xhtml" media-type="application/xhtml+xml"/>
+                <item id="ncx" href="Misc/toc.ncx" media-type="application/x-dtbncx+xml"/>
+              </manifest>
+              <spine toc="ncx">
+                <itemref idref="chapter"/>
+              </spine>
+            </package>
+            """.trimIndent(),
+        )
+    }
+
+    private fun writeContainer(root: File, packagePath: String) {
+        root.resolve("META-INF").mkdirs()
+        root.resolve("META-INF/container.xml").writeText(
+            """
+            <?xml version="1.0"?>
+            <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+              <rootfiles>
+                <rootfile full-path="$packagePath" media-type="application/oebps-package+xml"/>
+              </rootfiles>
+            </container>
+            """.trimIndent(),
+        )
+    }
+
+    private fun writeSameDreamLikeExtractedEpub(root: File) {
+        root.resolve("META-INF").mkdirs()
+        root.resolve("META-INF/container.xml").writeText(
+            """
+            <?xml version="1.0"?>
+            <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+              <rootfiles>
+                <rootfile full-path="item/standard.opf" media-type="application/oebps-package+xml"/>
+              </rootfiles>
+            </container>
+            """.trimIndent(),
+        )
+
+        root.resolve("item/xhtml").mkdirs()
+        root.resolve("item/style").mkdirs()
+        root.resolve("item/image").mkdirs()
+        val chapterHrefs = listOf(
+            "p-cover.xhtml",
+            "p-001.xhtml",
+            "p-002.xhtml",
+            "p-003.xhtml",
+            "p-004.xhtml",
+            "p-005.xhtml",
+            "p-006.xhtml",
+            "p-007.xhtml",
+            "p-colophon.xhtml",
+        )
+        chapterHrefs.forEachIndexed { index, href ->
+            root.resolve("item/xhtml/$href").writeText(
+                """
+                <html xmlns="http://www.w3.org/1999/xhtml">
+                <head>
+                  <link rel="stylesheet" type="text/css" href="../style/book-style.css"/>
+                  <link rel="stylesheet" type="text/css" href="../style/style-chuo.css"/>
+                </head>
+                <body><p>Chapter ${index + 1}</p></body>
+                </html>
+                """.trimIndent(),
+            )
+        }
+        root.resolve("item/style/book-style.css").writeText("body { writing-mode: vertical-rl; }")
+        root.resolve("item/style/style-chuo.css").writeText(".h-valign-width { -epub-writing-mode: horizontal-tb; }")
+        root.resolve("item/image/cover.jpg").writeBytes(byteArrayOf(1, 2, 3))
+        root.resolve("item/standard.opf").writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>また、同じ夢を見ていた</dc:title>
+              </metadata>
+              <manifest>
+                ${chapterHrefs.joinToString("\n                ") { href ->
+                    """<item id="${href.substringBefore('.')}" href="xhtml/$href" media-type="application/xhtml+xml"/>"""
+                }}
+                <item id="book-style" href="style/book-style.css" media-type="text/css"/>
+                <item id="style-chuo" href="style/style-chuo.css" media-type="text/css"/>
+                <item id="cover" href="image/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+              </manifest>
+              <spine page-progression-direction="rtl">
+                ${chapterHrefs.joinToString("\n                ") { href ->
+                    """<itemref idref="${href.substringBefore('.')}"/>"""
+                }}
+              </spine>
+            </package>
+            """.trimIndent(),
+        )
+    }
+
+    private fun writeKadokawaLikeEpubArchive(archive: File) {
+        val chapterHrefs = listOf("p-cover.xhtml") +
+            (1..14).map { index -> "p-${index.toString().padStart(3, '0')}.xhtml" } +
+            listOf("p-colophon.xhtml")
+
+        ZipOutputStream(archive.outputStream()).use { zip ->
+            zip.writeTextEntry(
+                "META-INF/container.xml",
+                """
+                <?xml version="1.0"?>
+                <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                  <rootfiles>
+                    <rootfile full-path="item/standard.opf" media-type="application/oebps-package+xml"/>
+                  </rootfiles>
+                </container>
+                """.trimIndent(),
+            )
+            chapterHrefs.forEachIndexed { index, href ->
+                zip.writeTextEntry(
+                    "item/xhtml/$href",
+                    """
+                    <html xmlns="http://www.w3.org/1999/xhtml">
+                    <body><p>Kadokawa chapter ${index + 1}</p></body>
+                    </html>
+                    """.trimIndent(),
+                )
+            }
+            zip.writeTextEntry("item/image/cover.jpg", "cover")
+            zip.writeTextEntry(
+                "item/standard.opf",
+                """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>他校の氷姫を助けたら、お友達から始める事になりました</dc:title>
+                  </metadata>
+                  <manifest>
+                    ${chapterHrefs.joinToString("\n                    ") { href ->
+                        val id = href.substringBefore('.')
+                        val properties = if (href == "p-cover.xhtml") {
+                            " properties=\"rendition:layout-pre-paginated\""
+                        } else {
+                            ""
+                        }
+                        """<item id="$id" href="xhtml/$href" media-type="application/xhtml+xml"$properties/>"""
+                    }}
+                    <item id="cover-image" href="image/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+                  </manifest>
+                  <spine page-progression-direction="rtl">
+                    ${chapterHrefs.joinToString("\n                    ") { href ->
+                        """<itemref idref="${href.substringBefore('.')}"/>"""
+                    }}
+                  </spine>
+                </package>
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private fun ZipOutputStream.writeTextEntry(path: String, value: String) {
+        putNextEntry(ZipEntry(path))
+        write(value.toByteArray())
+        closeEntry()
+    }
+
+    private companion object {
+        val selfClosingScriptRegex = Regex("<script\\b[^>]*/>", RegexOption.IGNORE_CASE)
+    }
+}

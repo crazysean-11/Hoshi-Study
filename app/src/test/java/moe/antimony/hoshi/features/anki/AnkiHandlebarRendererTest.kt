@@ -1,0 +1,443 @@
+package moe.antimony.hoshi.features.anki
+
+import moe.antimony.hoshi.dictionary.DictionaryCategory
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class AnkiHandlebarRendererTest {
+    @Test
+    fun glossarySelectionUsesPersistedDictionaryOrderCategoriesAndAllCategoryVariants() {
+        val excluded =
+            """<li data-dictionary="Excluded"><i>(Excluded)</i> <span>excluded</span></li>"""
+        val uncategorized =
+            """<li data-dictionary="General"><i>(General)</i> <span>general</span></li>"""
+        val monolingual =
+            """<li data-dictionary="国語辞典"><i>(名詞, 国語辞典)</i> <span>単語の意味</span></li>"""
+        val bilingual =
+            """<li data-dictionary="JMdict"><i>(JMdict)</i> <span>translation</span></li>"""
+        val payload = AnkiMiningPayload(
+            expression = "言葉",
+            glossaryFirst = "popup-order-must-not-win",
+            singleGlossaries = linkedMapOf(
+                "JMdict" to bilingual,
+                "Excluded" to excluded,
+                "General" to uncategorized,
+                "国語辞典" to monolingual,
+            ),
+        )
+        val dictionaries = listOf(
+            AnkiTermDictionary("Excluded", DictionaryCategory.Exclude),
+            AnkiTermDictionary("General", DictionaryCategory.None),
+            AnkiTermDictionary("国語辞典 [2026-08-23]", DictionaryCategory.Monolingual),
+            AnkiTermDictionary("JMdict [2026-08-23]", DictionaryCategory.Bilingual),
+        )
+
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{glossary-first}|" +
+                "{monolingual-definition}|{monolingual-definition-brief}|{monolingual-definition-no-dictionary}|" +
+                "{bilingual-definition}|{bilingual-definition-brief}|{bilingual-definition-no-dictionary}|" +
+                "{monolingual-definition-fallback}|{monolingual-definition-fallback-brief}|" +
+                "{monolingual-definition-fallback-no-dictionary}|" +
+                "{bilingual-definition-fallback}|{bilingual-definition-fallback-brief}|" +
+                "{bilingual-definition-fallback-no-dictionary}",
+            payload = payload,
+            context = AnkiMiningContext(sentence = ""),
+            termDictionaries = dictionaries,
+        )
+
+        assertEquals(
+            listOf(
+                uncategorized,
+                monolingual,
+                """<li data-dictionary="国語辞典"><span>単語の意味</span></li>""",
+                """<li data-dictionary="国語辞典"><i>(名詞)</i> <span>単語の意味</span></li>""",
+                bilingual,
+                """<li data-dictionary="JMdict"><span>translation</span></li>""",
+                """<li data-dictionary="JMdict"><span>translation</span></li>""",
+                monolingual,
+                """<li data-dictionary="国語辞典"><span>単語の意味</span></li>""",
+                """<li data-dictionary="国語辞典"><i>(名詞)</i> <span>単語の意味</span></li>""",
+                bilingual,
+                """<li data-dictionary="JMdict"><span>translation</span></li>""",
+                """<li data-dictionary="JMdict"><span>translation</span></li>""",
+            ).joinToString("|"),
+            rendered,
+        )
+    }
+
+    @Test
+    fun categoryFallbackUsesOnlyTheOppositeCategoryWhenThePreferredCategoryIsMissing() {
+        val bilingual =
+            """<li data-dictionary="JMdict"><i>(JMdict)</i> <span>translation</span></li>"""
+        val payload = AnkiMiningPayload(
+            expression = "言葉",
+            singleGlossaries = mapOf("JMdict" to bilingual),
+        )
+        val dictionaries = listOf(
+            AnkiTermDictionary("国語辞典", DictionaryCategory.Monolingual),
+            AnkiTermDictionary("JMdict", DictionaryCategory.Bilingual),
+        )
+
+        assertEquals(
+            "|$bilingual",
+            AnkiHandlebarRenderer.render(
+                template = "{monolingual-definition}|{monolingual-definition-fallback}",
+                payload = payload,
+                context = AnkiMiningContext(sentence = ""),
+                termDictionaries = dictionaries,
+            ),
+        )
+    }
+
+    @Test
+    fun categoryFallbackMatchesIosByFallingBackOnlyForAnEmptyPrimaryGlossary() {
+        val payload = AnkiMiningPayload(
+            expression = "言葉",
+            singleGlossaries = mapOf(
+                "国語辞典" to " ",
+                "JMdict" to "translation",
+            ),
+        )
+
+        assertEquals(
+            " ",
+            AnkiHandlebarRenderer.render(
+                template = "{monolingual-definition-fallback}",
+                payload = payload,
+                context = AnkiMiningContext(sentence = ""),
+                termDictionaries = listOf(
+                    AnkiTermDictionary("国語辞典", DictionaryCategory.Monolingual),
+                    AnkiTermDictionary("JMdict", DictionaryCategory.Bilingual),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun categorySelectionSkipsConfiguredDictionariesMissingFromThePopupGlossaries() {
+        val payload = AnkiMiningPayload(
+            expression = "言葉",
+            singleGlossaries = mapOf("Second" to "second glossary"),
+        )
+
+        assertEquals(
+            "second glossary",
+            AnkiHandlebarRenderer.render(
+                template = "{monolingual-definition}",
+                payload = payload,
+                context = AnkiMiningContext(sentence = ""),
+                termDictionaries = listOf(
+                    AnkiTermDictionary("Missing", DictionaryCategory.Monolingual),
+                    AnkiTermDictionary("Second", DictionaryCategory.Monolingual),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun rendersAllIosCoreHandlebars() {
+        val payload = AnkiMiningPayload(
+            expression = "食べる",
+            reading = "たべる",
+            matched = "食べる",
+            furiganaPlain = "食[た]べる",
+            frequenciesHtml = "<span>1139</span>",
+            freqHarmonicRank = "1139",
+            glossary = "<ol><li>eat</li></ol>",
+            glossaryFirst = "<li>eat</li>",
+            singleGlossaries = mapOf("JMdict" to "<li>eat</li>"),
+            pitchPositions = "<span>2</span>",
+            pitchCategories = "heiban",
+            phoneticTranscriptions = """<ul><li class="pronunciation" data-pronunciation-type="phonetic-transcription">/riːd/</li></ul>""",
+            popupSelectionText = "食べる",
+            audio = "https://audio.example/taberu.mp3",
+            selectedDictionary = "JMdict",
+            dictionaryMedia = emptyList(),
+        )
+        val context = AnkiMiningContext(
+            sentence = "パンを食べる。",
+            documentTitle = "テスト本",
+            coverPath = "cover.jpg",
+            sasayakiAudioPath = "cue.m4a",
+        )
+
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{expression}|{reading}|{furigana-plain}|{audio}|{glossary}|{glossary-first}|" +
+                "{selected-glossary}|{popup-selection-text}|{sentence}|{frequencies}|{frequency-harmonic-rank}|" +
+                "{pitch-accent-positions}|{pitch-accent-categories}|{phonetic-transcriptions}|" +
+                "{document-title}|{book-cover}|{sasayaki-audio}",
+            payload = payload,
+            context = context,
+        )
+
+        assertEquals(
+            "食べる|たべる|食[た]べる|https://audio.example/taberu.mp3|<ol><li>eat</li></ol>|<li>eat</li>|" +
+                "<li>eat</li>|食べる|パンを<b>食べる</b>。|<span>1139</span>|1139|" +
+                """<span>2</span>|heiban|<ul><li class="pronunciation" data-pronunciation-type="phonetic-transcription">/riːd/</li></ul>|""" +
+                "テスト本|cover.jpg|cue.m4a",
+            rendered,
+        )
+    }
+
+    @Test
+    fun parsesPhoneticTranscriptionsFromMiningPayloadJson() {
+        val payload = AnkiMiningPayload.fromJson(
+            """
+            {
+              "expression": "read",
+              "phoneticTranscriptions": "<ul><li>/riːd/</li></ul>"
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("<ul><li>/riːd/</li></ul>", payload.phoneticTranscriptions)
+    }
+
+    @Test
+    fun rendersSingleGlossaryHandlebarsAndUnknownValuesAsEmptyStrings() {
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{single-glossary-JMdict}|{single-glossary-Unknown}|{unknown}",
+            payload = AnkiMiningPayload(
+                expression = "読む",
+                singleGlossaries = mapOf("JMdict" to "read"),
+            ),
+            context = AnkiMiningContext(sentence = "本を読む。"),
+        )
+
+        assertEquals("read||", rendered)
+    }
+
+    @Test
+    fun singleGlossaryHandlebarMatchesImportedDictionaryTitleWhenPayloadUsesBaseDictionaryName() {
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{single-glossary-JMdict [2026-04-27]}",
+            payload = AnkiMiningPayload(
+                expression = "読む",
+                glossaryFirst = "first glossary",
+                singleGlossaries = mapOf("JMdict" to "jmdict glossary"),
+            ),
+            context = AnkiMiningContext(sentence = "本を読む。"),
+        )
+
+        assertEquals("jmdict glossary", rendered)
+    }
+
+    @Test
+    fun sentenceFallsBackToRawContextWhenMatchedPayloadIsBlank() {
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{sentence}",
+            payload = AnkiMiningPayload(expression = "読む", matched = ""),
+            context = AnkiMiningContext(sentence = "本を読む。"),
+        )
+
+        assertEquals("本を読む。", rendered)
+    }
+
+    @Test
+    fun sentenceBoldUsesSelectedOccurrenceOnly() {
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{sentence}",
+            payload = AnkiMiningPayload(expression = "僕", matched = "僕"),
+            context = AnkiMiningContext(
+                sentence = "僕は僕の本を読んだ。",
+                sentenceOffset = 2,
+            ),
+        )
+
+        assertEquals("僕は<b>僕</b>の本を読んだ。", rendered)
+    }
+
+    @Test
+    fun sentenceBoldFallsBackToFirstOccurrenceOnlyWithoutSelectionOffset() {
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{sentence}",
+            payload = AnkiMiningPayload(expression = "僕", matched = "僕"),
+            context = AnkiMiningContext(sentence = "僕は僕の本を読んだ。"),
+        )
+
+        assertEquals("<b>僕</b>は僕の本を読んだ。", rendered)
+    }
+
+    @Test
+    fun selectedGlossaryReturnsEmptyWhenNoDictionaryIsSelected() {
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{selected-glossary}",
+            payload = AnkiMiningPayload(
+                expression = "読む",
+                glossaryFirst = "read",
+                singleGlossaries = mapOf("JMdict" to "read"),
+                selectedDictionary = "",
+            ),
+            context = AnkiMiningContext(sentence = "本を読む。"),
+        )
+
+        assertEquals("", rendered)
+    }
+
+    @Test
+    fun rendersBriefNoDictionaryAndFallbackGlossaryHandlebars() {
+        val glossary =
+            """<div class="yomitan-glossary"><ol><li data-dictionary="JMdict"><i>(1, n, JMdict)</i> <span>eat</span></li><li data-dictionary="JMdict"><i>(2)</i> <span>consume</span></li></ol></div>"""
+        val firstGlossary =
+            """<div class="yomitan-glossary"><ol><li data-dictionary="JMdict"><i>(JMdict)</i> <span>eat</span></li></ol></div>"""
+        val payload = AnkiMiningPayload(
+            expression = "食べる",
+            glossary = glossary,
+            glossaryFirst = firstGlossary,
+            singleGlossaries = mapOf(
+                "JMdict" to glossary,
+                "明鏡国語辞典" to """<li data-dictionary="明鏡国語辞典"><i>(名詞, 明鏡国語辞典)</i> <span>辞書</span></li>""",
+            ),
+            selectedDictionary = "Missing",
+        )
+
+        assertEquals(
+            """<div class="yomitan-glossary"><ol><li data-dictionary="JMdict"><span>eat</span></li><li data-dictionary="JMdict"><span>consume</span></li></ol></div>""",
+            AnkiHandlebarRenderer.render("{glossary-brief}", payload, AnkiMiningContext(sentence = "")),
+        )
+        assertEquals(
+            """<div class="yomitan-glossary"><ol><li data-dictionary="JMdict"><i>(1, n)</i> <span>eat</span></li><li data-dictionary="JMdict"><i>(2)</i> <span>consume</span></li></ol></div>""",
+            AnkiHandlebarRenderer.render("{glossary-no-dictionary}", payload, AnkiMiningContext(sentence = "")),
+        )
+        assertEquals(
+            """<div class="yomitan-glossary"><ol><li data-dictionary="JMdict"><span>eat</span></li></ol></div>""",
+            AnkiHandlebarRenderer.render("{glossary-first-brief}", payload, AnkiMiningContext(sentence = "")),
+        )
+        assertEquals(
+            """<div class="yomitan-glossary"><ol><li data-dictionary="JMdict"><span>eat</span></li></ol></div>""",
+            AnkiHandlebarRenderer.render("{glossary-first-no-dictionary}", payload, AnkiMiningContext(sentence = "")),
+        )
+        assertEquals(
+            firstGlossary,
+            AnkiHandlebarRenderer.render("{selected-glossary-fallback}", payload, AnkiMiningContext(sentence = "")),
+        )
+        assertEquals(
+            """<div class="yomitan-glossary"><ol><li data-dictionary="JMdict"><span>eat</span></li></ol></div>""",
+            AnkiHandlebarRenderer.render("{selected-glossary-brief-fallback}", payload, AnkiMiningContext(sentence = "")),
+        )
+    }
+
+    @Test
+    fun rendersSelectedAndSingleGlossarySuffixVariantsWithDictionaryNameNormalization() {
+        val payload = AnkiMiningPayload(
+            expression = "読む",
+            glossaryFirst = """<li data-dictionary="JMdict"><i>(JMdict)</i> <span>read</span></li>""",
+            singleGlossaries = mapOf(
+                "JMdict" to """<li data-dictionary="JMdict"><i>(JMdict)</i> <span>read</span></li>""",
+                "明鏡国語辞典" to """<li data-dictionary="明鏡国語辞典"><i>(名詞, 明鏡国語辞典)</i> <span>よむ</span></li>""",
+            ),
+            selectedDictionary = "JMdict [2026-04-27]",
+        )
+
+        val rendered = AnkiHandlebarRenderer.render(
+            template = "{selected-glossary-brief}|{selected-glossary-no-dictionary}|" +
+                "{single-glossary-JMdict [2026-04-27]-brief}|{single-glossary-明鏡国語辞典-no-dictionary}",
+            payload = payload,
+            context = AnkiMiningContext(sentence = "本を読む。"),
+        )
+
+        assertEquals(
+            """<li data-dictionary="JMdict"><span>read</span></li>|""" +
+                """<li data-dictionary="JMdict"><span>read</span></li>|""" +
+                """<li data-dictionary="JMdict"><span>read</span></li>|""" +
+                """<li data-dictionary="明鏡国語辞典"><i>(名詞)</i> <span>よむ</span></li>""",
+            rendered,
+        )
+    }
+
+    @Test
+    fun clozePartsUsePreciseSelectedOccurrenceAndShareSentenceRange() {
+        val payload = AnkiMiningPayload(expression = "僕", matched = "僕")
+        val context = AnkiMiningContext(sentence = "僕は僕の本", sentenceOffset = 2)
+
+        assertEquals(
+            "僕は|僕|の本|僕は<b>僕</b>の本",
+            AnkiHandlebarRenderer.render(
+                "{cloze-prefix}|{cloze-body}|{cloze-suffix}|{sentence}",
+                payload,
+                context,
+            ),
+        )
+    }
+
+    @Test
+    fun clozePartsHandleSupplementaryCharactersAndInvalidOffsets() {
+        val payload = AnkiMiningPayload(expression = "𠮟る", matched = "𠮟る")
+
+        assertEquals(
+            "前|𠮟る|後",
+            AnkiHandlebarRenderer.render(
+                "{cloze-prefix}|{cloze-body}|{cloze-suffix}",
+                payload,
+                AnkiMiningContext(sentence = "前𠮟る後", sentenceOffset = 1),
+            ),
+        )
+        assertEquals(
+            "前|𠮟る|後",
+            AnkiHandlebarRenderer.render(
+                "{cloze-prefix}|{cloze-body}|{cloze-suffix}",
+                payload,
+                AnkiMiningContext(sentence = "前𠮟る後", sentenceOffset = 99),
+            ),
+        )
+    }
+
+    @Test
+    fun selectedGlossaryUsesConfiguredFallbackWithoutRecursing() {
+        val payload = AnkiMiningPayload(
+            expression = "読む",
+            glossaryFirst = "first glossary",
+            selectedDictionary = "Missing",
+        )
+
+        assertEquals(
+            "first glossary",
+            AnkiHandlebarRenderer.render(
+                template = "{selected-glossary}",
+                payload = payload,
+                context = AnkiMiningContext(sentence = "読む"),
+                selectedGlossaryFallback = "{glossary-first}",
+            ),
+        )
+        assertEquals(
+            "monolingual glossary",
+            AnkiHandlebarRenderer.render(
+                template = "{selected-glossary}",
+                payload = payload.copy(singleGlossaries = mapOf("国語辞典" to "monolingual glossary")),
+                context = AnkiMiningContext(sentence = "読む"),
+                selectedGlossaryFallback = "{monolingual-definition}",
+                termDictionaries = listOf(
+                    AnkiTermDictionary("国語辞典", DictionaryCategory.Monolingual),
+                ),
+            ),
+        )
+        assertEquals(
+            "",
+            AnkiHandlebarRenderer.render(
+                template = "{selected-glossary}",
+                payload = payload,
+                context = AnkiMiningContext(sentence = "読む"),
+                selectedGlossaryFallback = "{selected-glossary}",
+            ),
+        )
+    }
+
+    @Test
+    fun rendersAllAndFirstPitchAccentGraphsFromPayload() {
+        val first = """<svg viewBox="0 0 100 100"><circle/></svg>"""
+        val second = """<svg viewBox="0 0 150 100"><path/></svg>"""
+        val payload = AnkiMiningPayload(
+            expression = "食べる",
+            pitchAccentGraphs = "<ol><li>$first</li><li>$second</li></ol>",
+        )
+
+        assertEquals(
+            "<ol><li>$first</li><li>$second</li></ol>|$first",
+            AnkiHandlebarRenderer.render(
+                "{pitch-accent-graphs}|{pitch-accent-graphs-first}",
+                payload,
+                AnkiMiningContext(sentence = "食べる"),
+            ),
+        )
+    }
+}

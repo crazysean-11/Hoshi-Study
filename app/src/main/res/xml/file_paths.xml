@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path
+        name="anki_media"
+        path="anki-media/" />
+    <cache-path
+        name="reader_images"
+        path="reader-images/" />
+    <cache-path
+        name="sasayaki_subtitles"
+        path="sasayaki-subtitles/" />
+    <files-path
+        name="files"
+        path="." />
+    <external-files-path
+        name="update_downloads"
+        path="Download/" />
+</paths>

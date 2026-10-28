@@ -1,0 +1,221 @@
+package moe.antimony.hoshi.features.sync
+
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import moe.antimony.hoshi.epub.BookInfo
+import moe.antimony.hoshi.epub.Bookmark
+import moe.antimony.hoshi.epub.ReadingStatistics
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class TtuSyncRulesTest {
+    @Test
+    fun sanitizeTtuFilenameMatchesIosAndTtuRules() {
+        assertEquals("Book~ttu-spc~", TtuSyncRules.sanitizeTtuFilename("Book "))
+        assertEquals("Book~ttu-dend~", TtuSyncRules.sanitizeTtuFilename("Book."))
+        assertEquals(
+            "a~ttu-star~b%2Fc%3Fd%3Ce%3Ef%5Cg%3Ah%7Ci%25j%22k",
+            TtuSyncRules.sanitizeTtuFilename("a*b/c?d<e>f\\g:h|i%j\"k"),
+        )
+    }
+
+    @Test
+    fun appleReferenceSecondsConvertToUnixMillis() {
+        assertEquals(978_307_200_000L, TtuSyncRules.appleReferenceSecondsToUnixMillis(0.0))
+        assertEquals(978_307_201_234L, TtuSyncRules.appleReferenceSecondsToUnixMillis(1.234))
+        assertEquals(1.234, TtuSyncRules.unixMillisToAppleReferenceSeconds(978_307_201_234L), 0.000001)
+    }
+
+    @Test
+    fun automaticDirectionUsesLocalBookmarkAndRemoteProgressTimestamp() {
+        assertEquals(
+            SyncDirection.Synced,
+            TtuSyncRules.determineDirection(local = null, remoteProgressFile = null),
+        )
+        assertEquals(
+            SyncDirection.ImportFromTtu,
+            TtuSyncRules.determineDirection(
+                local = null,
+                remoteProgressFile = DriveFile(id = "remote", name = "progress_1_6_2000_0.2.json"),
+            ),
+        )
+        assertEquals(
+            SyncDirection.ExportToTtu,
+            TtuSyncRules.determineDirection(
+                local = Bookmark(0, 0.1, 10, TtuSyncRules.unixMillisToAppleReferenceSeconds(3_000)),
+                remoteProgressFile = DriveFile(id = "remote", name = "progress_1_6_2000_0.2.json"),
+            ),
+        )
+        assertEquals(
+            SyncDirection.ImportFromTtu,
+            TtuSyncRules.determineDirection(
+                local = Bookmark(0, 0.1, 10, TtuSyncRules.unixMillisToAppleReferenceSeconds(1_000)),
+                remoteProgressFile = DriveFile(id = "remote", name = "progress_1_6_2000_0.2.json"),
+            ),
+        )
+        assertEquals(
+            SyncDirection.Synced,
+            TtuSyncRules.determineDirection(
+                local = Bookmark(0, 0.1, 10, TtuSyncRules.unixMillisToAppleReferenceSeconds(2_000)),
+                remoteProgressFile = DriveFile(id = "remote", name = "progress_1_6_2000_0.2.json"),
+            ),
+        )
+    }
+
+    @Test
+    fun bookInfoResolvesRemoteCharacterPositionLikeIos() {
+        val bookInfo = BookInfo(
+            characterCount = 300,
+            chapterInfo = mapOf(
+                "intro" to BookInfo.ChapterInfo(spineIndex = 0, currentTotal = 0, chapterCount = 100),
+                "body" to BookInfo.ChapterInfo(spineIndex = 1, currentTotal = 100, chapterCount = 200),
+            ),
+        )
+
+        assertEquals(ResolvedBookPosition(spineIndex = 1, progress = 0.25), bookInfo.resolveTtuCharacterPosition(150))
+        assertEquals(ResolvedBookPosition(spineIndex = 1, progress = 0.995), bookInfo.resolveTtuCharacterPosition(999))
+    }
+
+    @Test
+    fun progressAudioAndStatisticsFileNamesMatchIos() {
+        val progress = TtuProgress(
+            dataId = 7,
+            exploredCharCount = 300,
+            progress = 0.375,
+            lastBookmarkModified = 1_700_000_123_456L,
+        )
+        assertEquals(
+            "progress_1_6_1700000123456_0.375.json",
+            TtuSyncRules.progressFileName(progress),
+        )
+        assertEquals(
+            """{"dataId":7,"exploredCharCount":300,"progress":0.375,"lastBookmarkModified":1700000123456}""",
+            Json.encodeToString(progress),
+        )
+
+        val audioBook = TtuAudioBook(
+            title = "Title",
+            playbackPosition = 12.5,
+            lastAudioBookModified = 1_700_000_123_999L,
+        )
+        assertEquals(
+            "audioBook_1_6_1700000123999_12.5.json",
+            TtuSyncRules.audioBookFileName(audioBook),
+        )
+
+        val stats = listOf(
+            ReadingStatistics(
+                title = "Title",
+                dateKey = "2026-05-12",
+                charactersRead = 100,
+                readingTime = 50.0,
+                minReadingSpeed = 10,
+                altMinReadingSpeed = 8,
+                lastReadingSpeed = 7200,
+                maxReadingSpeed = 9000,
+                lastStatisticModified = 1_000,
+            ),
+            ReadingStatistics(
+                title = "Title",
+                dateKey = "2026-05-13",
+                charactersRead = 200,
+                readingTime = 100.0,
+                minReadingSpeed = 12,
+                altMinReadingSpeed = 7,
+                lastReadingSpeed = 7200,
+                maxReadingSpeed = 9300,
+                lastStatisticModified = 3_000,
+            ),
+        )
+
+        assertEquals(
+            "statistics_1_6_3000_300_150.0_10_7_7200.0_7200_75.0_84.0_150.0_167.0_7200.0_7158.0_na.json",
+            TtuSyncRules.statisticsFileName(stats),
+        )
+    }
+
+    @Test
+    fun progressJsonPreservesTtuDataIdsOutsideIntRange() {
+        val input =
+            """{"dataId":-1959131391809764,"exploredCharCount":76793,"progress":1.0,"lastBookmarkModified":1785337187112}"""
+
+        val progress = runCatching {
+            Json.decodeFromString(TtuProgress.serializer(), input)
+        }.getOrNull()
+
+        assertEquals(-1_959_131_391_809_764L, progress?.dataId)
+        assertEquals(input, progress?.let(Json::encodeToString))
+    }
+
+    @Test
+    fun remoteLastAccessUsesNewestProgressOrAudioBeforeBookDataFallback() {
+        val files = DriveSyncFiles(
+            bookData = DriveFile("book", "bookdata_1_6_200_9000_8000.zip"),
+            progress = DriveFile("progress", "progress_1_6_3000_0.8.json"),
+            audioBook = DriveFile("audio", "audioBook_1_6_4000_8.0.json"),
+            statistics = DriveFile("stats", "statistics_1_6_9999_10.json"),
+        )
+        assertEquals(4000L, files.lastAccessMillis)
+        assertEquals(3000L, files.copy(audioBook = null).lastAccessMillis)
+        assertEquals(4000L, files.copy(progress = null).lastAccessMillis)
+        assertEquals(5000L, files.copy(progress = DriveFile("p", "progress_1_6_5000_0.json")).lastAccessMillis)
+        assertEquals(8000L, files.copy(progress = null, audioBook = null).lastAccessMillis)
+        assertEquals(8000L, files.copy(
+            progress = DriveFile("p", "progress_1_6_invalid_0.json"),
+            audioBook = DriveFile("a", "audioBook_1_6_invalid_0.json"),
+        ).lastAccessMillis)
+        assertEquals(null, files.copy(bookData = null, progress = null, audioBook = null).lastAccessMillis)
+        for (name in listOf("bookdata.zip", "bookdata_1_6_200_9000_bad.zip", "other_1_6_200_9000_8000.zip")) {
+            assertEquals(null, files.copy(
+                bookData = DriveFile("bad", name), progress = null, audioBook = null,
+            ).lastAccessMillis)
+        }
+        // File selection still uses modification time, independently of last access.
+        assertEquals(9000L, TtuSyncRules.parseBookDataTimestampMillis(files.bookData))
+    }
+
+    @Test
+    fun driveSyncFilesPreferLatestTimestampedTtuFiles() {
+        val syncFiles = listOf(
+            DriveFile(id = "old-bookdata", name = "bookdata_1_6_200_1000_500.zip"),
+            DriveFile(id = "new-bookdata", name = "bookdata_1_6_200_3000_500.zip"),
+            DriveFile(id = "old-progress", name = "progress_1_6_1000_0.2.json"),
+            DriveFile(id = "new-progress", name = "progress_1_6_4000_0.8.json"),
+            DriveFile(id = "old-statistics", name = "statistics_1_6_1000_10_10.0_0_0_0.0_0_0.0_0.0_0.0_0.0_0.0_0.0_na.json"),
+            DriveFile(id = "new-statistics", name = "statistics_1_6_5000_10_10.0_0_0_0.0_0_0.0_0.0_0.0_0.0_0.0_0.0_na.json"),
+            DriveFile(id = "old-audio", name = "audioBook_1_6_1000_4.0.json"),
+            DriveFile(id = "new-audio", name = "audioBook_1_6_6000_8.0.json"),
+            DriveFile(id = "cover", name = "cover_1_6.jpeg"),
+        ).toDriveSyncFiles()
+
+        assertEquals("new-bookdata", syncFiles.bookData?.id)
+        assertEquals("new-progress", syncFiles.progress?.id)
+        assertEquals("new-statistics", syncFiles.statistics?.id)
+        assertEquals("new-audio", syncFiles.audioBook?.id)
+        assertEquals("cover", syncFiles.cover?.id)
+        assertEquals(6000L, syncFiles.lastAccessMillis)
+    }
+
+    @Test
+    fun statisticsMergeAndReplaceMatchIosSemantics() {
+        val local = listOf(
+            ReadingStatistics(title = "Title", dateKey = "2026-05-12", charactersRead = 100, lastStatisticModified = 100),
+            ReadingStatistics(title = "Title", dateKey = "2026-05-13", charactersRead = 200, lastStatisticModified = 100),
+        )
+        val external = listOf(
+            ReadingStatistics(title = "Title", dateKey = "2026-05-13", charactersRead = 250, lastStatisticModified = 200),
+            ReadingStatistics(title = "Title", dateKey = "2026-05-14", charactersRead = 300, lastStatisticModified = 50),
+        )
+
+        assertEquals(external, TtuSyncRules.mergeStatistics(local, external, StatisticsSyncMode.Replace))
+        assertEquals(
+            mapOf(
+                "2026-05-12" to 100,
+                "2026-05-13" to 250,
+                "2026-05-14" to 300,
+            ),
+            TtuSyncRules.mergeStatistics(local, external, StatisticsSyncMode.Merge)
+                .associate { it.dateKey to it.charactersRead },
+        )
+    }
+}

@@ -1,0 +1,169 @@
+package moe.antimony.hoshi.features.audio
+
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+
+data class LocalAudioEntry(
+    val source: String,
+    val expression: String,
+    val reading: String?,
+    val file: String,
+    val display: String = "",
+)
+
+data class LocalAudioCandidate(
+    val name: String,
+    val url: String,
+)
+
+data class LocalAudioFile(
+    val source: String,
+    val file: String,
+)
+
+object AudioSourceResolver {
+    fun expandTemplate(template: String, term: String, reading: String): String =
+        template
+            .replace("{term}", term.urlEncode())
+            .replace("{reading}", reading.urlEncode())
+}
+
+object LocalAudioResolver {
+    private val supportedAudioExtensions = setOf("mp3", "opus", "ogg")
+    private val sourceDisplayNames = mapOf(
+        "nhk16" to "NHK16 %s",
+        "daijisen" to "Daijisen %s",
+        "shinmeikai8" to "SMK8 %s",
+        "jpod" to "JPod101",
+        "jpod_alternate" to "JPod101 Alt",
+        "taas" to "TAAS",
+        "ozk5" to "OZK5 %s",
+        "forvo" to "Forvo (%s)",
+        "forvo_ext" to "Forvo Ext",
+        "forvo_ext2" to "Forvo Ext2",
+    )
+
+    fun resolve(
+        term: String,
+        reading: String,
+        rows: List<LocalAudioEntry>,
+        sourceOrder: List<String> = LocalAudioSourceOrder.defaultOrder(rows.map { it.source }),
+        disabledSources: Set<String> = emptySet(),
+    ): LocalAudioEntry? = rankedEntries(term, reading, rows, sourceOrder, disabledSources).firstOrNull()
+
+    fun resolveCandidates(
+        term: String,
+        reading: String,
+        rows: List<LocalAudioEntry>,
+        sourceOrder: List<String> = LocalAudioSourceOrder.defaultOrder(rows.map { it.source }),
+        disabledSources: Set<String> = emptySet(),
+    ): List<LocalAudioCandidate> {
+        val normalizedReading = katakanaToHiragana(reading)
+        return rankedEntries(term, normalizedReading, rows, sourceOrder, disabledSources)
+            .map { entry ->
+                LocalAudioCandidate(
+                    name = entry.candidateName(term, normalizedReading),
+                    url = audioUrl(entry.source, entry.file),
+                )
+            }
+            .distinctBy(LocalAudioCandidate::url)
+    }
+
+    private fun rankedEntries(
+        term: String,
+        reading: String,
+        rows: List<LocalAudioEntry>,
+        sourceOrder: List<String>,
+        disabledSources: Set<String>,
+    ): List<LocalAudioEntry> {
+        val normalizedReading = katakanaToHiragana(reading)
+        val sourceRank = sourceOrder.withIndex().associate { it.value to it.index }
+        return rows
+            .asSequence()
+            .filterNot { it.source in disabledSources }
+            .filter { it.expression == term || (!it.reading.isNullOrBlank() && it.reading == normalizedReading) }
+            .filter { isSupportedAudioFile(it.file) }
+            .sortedWith(
+                compareBy<LocalAudioEntry> {
+                    it.localAudioMatchRank(term, normalizedReading)
+                }.thenBy {
+                    sourceRank[it.source] ?: Int.MAX_VALUE
+                }.thenBy {
+                    it.reading.orEmpty()
+                },
+            )
+            .toList()
+    }
+
+    fun audioUrl(source: String, file: String): String =
+        "$LOCAL_AUDIO_SCHEME://${source.urlEncode()}/${file.urlEncode()}"
+
+    fun parseAudioUrl(url: String): LocalAudioFile? {
+        if (!url.startsWith("$LOCAL_AUDIO_SCHEME://")) return null
+        val tail = url.removePrefix("$LOCAL_AUDIO_SCHEME://")
+        val slash = tail.indexOf('/')
+        if (slash <= 0 || slash == tail.lastIndex) return null
+        return LocalAudioFile(
+            source = tail.substring(0, slash).urlDecode(),
+            file = tail.substring(slash + 1).urlDecode(),
+        )
+    }
+
+    fun isSupportedAudioFile(file: String): Boolean =
+        audioExtension(file) in supportedAudioExtensions
+
+    fun audioExtension(file: String): String =
+        file.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+
+    fun mimeType(file: String): String =
+        when (audioExtension(file)) {
+            "mp3" -> "audio/mpeg"
+            "opus", "ogg" -> "audio/ogg"
+            else -> "application/octet-stream"
+        }
+
+    private fun LocalAudioEntry.localAudioMatchRank(term: String, normalizedReading: String): Int {
+        val readingMatches = normalizedReading.isNotBlank() && reading == normalizedReading
+        val expressionMatches = expression == term
+        return when {
+            normalizedReading.isBlank() && expressionMatches -> 0
+            expressionMatches && (reading == null || readingMatches) -> 0
+            readingMatches -> 1
+            expressionMatches -> 2
+            else -> 3
+        }
+    }
+
+    private fun LocalAudioEntry.candidateName(term: String, normalizedReading: String): String {
+        val template = sourceDisplayNames[source]
+        val sourceName = when {
+            template == null -> source
+            "%s" in template -> template.replace("%s", display)
+            else -> template
+        }
+        val matchDescription = when (localAudioMatchRank(term, normalizedReading)) {
+            1 -> " ($expression)"
+            2 -> " (${reading.orEmpty()})"
+            else -> ""
+        }
+        return sourceName.trim() + matchDescription
+    }
+
+    fun katakanaToHiragana(text: String): String {
+        val builder = StringBuilder()
+        text.codePoints().forEach { codePoint ->
+            val converted = if (codePoint in 0x30A1..0x30F6) codePoint - 0x60 else codePoint
+            builder.appendCodePoint(converted)
+        }
+        return builder.toString()
+    }
+
+    const val LOCAL_AUDIO_SCHEME = "hoshi-local-audio"
+}
+
+internal fun String.urlEncode(): String =
+    URLEncoder.encode(this, StandardCharsets.UTF_8.name()).replace("+", "%20")
+
+private fun String.urlDecode(): String =
+    URLDecoder.decode(this, StandardCharsets.UTF_8.name())

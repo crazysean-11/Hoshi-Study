@@ -1,0 +1,236 @@
+package moe.antimony.hoshi.di
+
+import android.content.ContentResolver
+import android.content.Context
+import androidx.work.WorkManager
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import java.io.File
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import moe.antimony.hoshi.BuildConfig
+import moe.antimony.hoshi.features.anki.AnkiSettingsRepository
+import moe.antimony.hoshi.features.anki.ankiSettingsRepository
+import moe.antimony.hoshi.features.audio.AudioSettingsRepository
+import moe.antimony.hoshi.features.audio.AudioRequestHandler
+import moe.antimony.hoshi.features.audio.LocalAudioRepository
+import moe.antimony.hoshi.features.audio.RemoteWordAudioRepository
+import moe.antimony.hoshi.features.audio.UrlConnectionAudioHttpClient
+import moe.antimony.hoshi.features.audio.audioSettingsRepository
+import moe.antimony.hoshi.features.bookshelf.BookshelfSettingsRepository
+import moe.antimony.hoshi.features.bookshelf.bookshelfSettingsRepository
+import moe.antimony.hoshi.features.dictionary.DictionarySettingsRepository
+import moe.antimony.hoshi.features.dictionary.dictionarySettingsRepository
+import moe.antimony.hoshi.features.display.AppDisplaySettingsRepository
+import moe.antimony.hoshi.features.display.appDisplaySettingsRepository
+import moe.antimony.hoshi.features.reader.ReaderSettingsRepository
+import moe.antimony.hoshi.features.reader.readerDisplaySettingsMigrationSource
+import moe.antimony.hoshi.features.reader.readerSettingsRepository
+import moe.antimony.hoshi.features.sasayaki.SasayakiSettingsRepository
+import moe.antimony.hoshi.features.sasayaki.sasayakiSettingsRepository
+import moe.antimony.hoshi.features.statistics.StatisticsSettingsRepository
+import moe.antimony.hoshi.features.statistics.statisticsSettingsRepository
+import moe.antimony.hoshi.features.sync.DriveSyncDataSource
+import moe.antimony.hoshi.features.sync.SyncSettingsRepository
+import moe.antimony.hoshi.features.sync.syncSettingsRepository
+import moe.antimony.hoshi.features.update.UpdateDownloadStore
+import moe.antimony.hoshi.features.update.UpdateSettingsRepository
+import moe.antimony.hoshi.features.update.updateDownloadStore
+import moe.antimony.hoshi.features.update.updateSettingsRepository
+import moe.antimony.hoshi.features.wallpaper.AndroidBookCoverExportTarget
+import moe.antimony.hoshi.features.wallpaper.AndroidBookCoverImageRenderer
+import moe.antimony.hoshi.features.wallpaper.AndroidBookCoverLockScreenTarget
+import moe.antimony.hoshi.features.wallpaper.AndroidBookCoverScreenSizeProvider
+import moe.antimony.hoshi.features.wallpaper.AndroidIReaderBookCoverTarget
+import moe.antimony.hoshi.features.wallpaper.BookCoverPublisher
+import moe.antimony.hoshi.features.wallpaper.BookCoverScreenSizeProvider
+import moe.antimony.hoshi.features.wallpaper.BookCoverWallpaperCapabilityProvider
+import moe.antimony.hoshi.features.wallpaper.BookCoverWallpaperSettingsRepository
+import moe.antimony.hoshi.features.wallpaper.DefaultBookCoverPublisher
+import moe.antimony.hoshi.features.wallpaper.IReaderBookCoverCapabilityProvider
+import moe.antimony.hoshi.features.wallpaper.bookCoverWallpaperSettingsRepository
+import moe.antimony.hoshi.profiles.ProfileRepository
+
+@Module
+@InstallIn(SingletonComponent::class)
+internal object HoshiAppModule {
+    @Provides
+    @Singleton
+    @ApplicationScope
+    fun provideApplicationScope(
+        @MainDispatcher mainDispatcher: CoroutineDispatcher,
+    ): CoroutineScope = CoroutineScope(SupervisorJob() + mainDispatcher)
+
+    @Provides
+    @DefaultDispatcher
+    fun provideDefaultDispatcher(): CoroutineDispatcher = Dispatchers.Default
+
+    @Provides
+    @IoDispatcher
+    fun provideIoDispatcher(): CoroutineDispatcher = Dispatchers.IO
+
+    @Provides
+    @MainDispatcher
+    fun provideMainDispatcher(): CoroutineDispatcher = Dispatchers.Main.immediate
+
+    @Provides
+    @Singleton
+    fun provideContentResolver(@ApplicationContext context: Context): ContentResolver =
+        context.contentResolver
+
+    @Provides
+    @Singleton
+    @FilesDir
+    fun provideFilesDir(@ApplicationContext context: Context): File = context.filesDir
+
+    @Provides
+    @Singleton
+    @CacheDir
+    fun provideCacheDir(@ApplicationContext context: Context): File = context.cacheDir
+
+    @Provides
+    @Singleton
+    fun provideWorkManager(@ApplicationContext context: Context): WorkManager =
+        WorkManager.getInstance(context)
+
+    @Provides
+    @Singleton
+    fun provideAppDisplaySettingsRepository(
+        @ApplicationContext context: Context,
+        profileRepository: ProfileRepository,
+        @IoDispatcher ioDispatcher: CoroutineDispatcher,
+    ): AppDisplaySettingsRepository = context.appDisplaySettingsRepository(
+        migrationSource = context.readerDisplaySettingsMigrationSource(profileRepository, ioDispatcher),
+    )
+
+    @Provides
+    @Singleton
+    fun provideReaderSettingsRepository(
+        @ApplicationContext context: Context,
+        profileRepository: ProfileRepository,
+        appDisplaySettingsRepository: AppDisplaySettingsRepository,
+        @IoDispatcher ioDispatcher: CoroutineDispatcher,
+    ): ReaderSettingsRepository =
+        context.readerSettingsRepository(
+            profileRepository = profileRepository,
+            displaySettings = appDisplaySettingsRepository.settings,
+            ioDispatcher = ioDispatcher,
+        )
+
+    @Provides
+    @Singleton
+    fun provideDictionarySettingsRepository(
+        @ApplicationContext context: Context,
+        profileRepository: ProfileRepository,
+        @IoDispatcher ioDispatcher: CoroutineDispatcher,
+    ): DictionarySettingsRepository =
+        context.dictionarySettingsRepository(profileRepository, ioDispatcher)
+
+    @Provides
+    @Singleton
+    fun provideRemoteWordAudioRepository(
+        client: UrlConnectionAudioHttpClient,
+        @IoDispatcher ioDispatcher: CoroutineDispatcher,
+    ): RemoteWordAudioRepository = RemoteWordAudioRepository(client, ioDispatcher)
+
+    @Provides
+    @Singleton
+    fun provideAudioRequestHandler(
+        local: LocalAudioRepository,
+        remote: RemoteWordAudioRepository,
+    ): AudioRequestHandler = AudioRequestHandler(local, remote)
+
+    @Provides
+    @Singleton
+    fun provideAudioSettingsRepository(@ApplicationContext context: Context): AudioSettingsRepository =
+        context.audioSettingsRepository()
+
+    @Provides
+    @Singleton
+    fun provideAnkiSettingsRepository(
+        @ApplicationContext context: Context,
+        profileRepository: ProfileRepository,
+        @IoDispatcher ioDispatcher: CoroutineDispatcher,
+    ): AnkiSettingsRepository =
+        context.ankiSettingsRepository(profileRepository, ioDispatcher)
+
+    @Provides
+    @Singleton
+    fun provideSasayakiSettingsRepository(@ApplicationContext context: Context): SasayakiSettingsRepository =
+        context.sasayakiSettingsRepository()
+
+    @Provides
+    @Singleton
+    fun provideSyncSettingsRepository(
+        @ApplicationContext context: Context,
+        drive: DriveSyncDataSource,
+    ): SyncSettingsRepository =
+        context.syncSettingsRepository(drive)
+
+    @Provides
+    @Singleton
+    fun provideBookshelfSettingsRepository(@ApplicationContext context: Context): BookshelfSettingsRepository =
+        context.bookshelfSettingsRepository()
+
+    @Provides
+    @Singleton
+    fun provideStatisticsSettingsRepository(@ApplicationContext context: Context): StatisticsSettingsRepository =
+        context.statisticsSettingsRepository()
+
+    @Provides
+    @Singleton
+    fun provideUpdateSettingsRepository(@ApplicationContext context: Context): UpdateSettingsRepository =
+        context.updateSettingsRepository()
+
+    @Provides
+    @Singleton
+    fun provideBookCoverWallpaperSettingsRepository(
+        @ApplicationContext context: Context,
+    ): BookCoverWallpaperSettingsRepository = context.bookCoverWallpaperSettingsRepository()
+
+    @Provides
+    @Singleton
+    fun provideBookCoverPublisher(
+        settingsRepository: BookCoverWallpaperSettingsRepository,
+        renderer: AndroidBookCoverImageRenderer,
+        lockScreenTarget: AndroidBookCoverLockScreenTarget,
+        exportTarget: AndroidBookCoverExportTarget,
+        iReaderTarget: AndroidIReaderBookCoverTarget,
+    ): BookCoverPublisher = DefaultBookCoverPublisher(
+        settings = settingsRepository.settings,
+        renderer = renderer,
+        lockScreenTarget = lockScreenTarget,
+        exportTarget = exportTarget,
+        iReaderTarget = iReaderTarget,
+    )
+
+    @Provides
+    fun provideBookCoverWallpaperCapabilityProvider(
+        target: AndroidBookCoverLockScreenTarget,
+    ): BookCoverWallpaperCapabilityProvider = target
+
+    @Provides
+    fun provideIReaderBookCoverCapabilityProvider(
+        target: AndroidIReaderBookCoverTarget,
+    ): IReaderBookCoverCapabilityProvider = target
+
+    @Provides
+    fun provideBookCoverScreenSizeProvider(
+        provider: AndroidBookCoverScreenSizeProvider,
+    ): BookCoverScreenSizeProvider = provider
+
+    @Provides
+    @Singleton
+    fun provideUpdateDownloadStore(@ApplicationContext context: Context): UpdateDownloadStore =
+        context.updateDownloadStore()
+
+    @Provides
+    @CurrentVersionName
+    fun provideCurrentVersionName(): String = BuildConfig.VERSION_NAME
+}

@@ -1,0 +1,16 @@
+[package]
+name = "hoshiepub"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+name = "hoshiepub"
+
+[dependencies]
+rbook = { version = "0.7.10", default-features = false, features = ["threadsafe"] }
+uniffi = { version = "0.31", default-features = false }
+thiserror = "2"
+
+[features]
+bindgen = ["uniffi/cli"]
